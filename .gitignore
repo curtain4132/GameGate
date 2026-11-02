@@ -396,3 +396,6 @@ samples/gfx/d3d12_upscaler/Zdir_none/
 samples/record/ffmpeg_pipeline/record_finalize_fragment.c
 samples/record/ffmpeg_pipeline/record_start_fragment.c
 samples/input/sensor_subdevice/core_sensor_fragment.c
+
+# GameGate local build outputs, downloads and runtime data
+/artifacts/
