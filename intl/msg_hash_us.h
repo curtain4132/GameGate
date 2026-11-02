@@ -23,6 +23,14 @@ other than `msg_hash_us.h` will be rejected.
 /* Top-Level Menu */
 
 MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GAMEGATE_LIBRARY,
+   "My Game Library"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_GAMEGATE_LIBRARY,
+   "Import local games and browse your game collections."
+   )
+MSG_HASH(
    MENU_ENUM_LABEL_VALUE_MAIN_MENU,
    "Main Menu"
    )

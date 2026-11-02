@@ -10086,6 +10086,7 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
          {MENU_ENUM_LABEL_OVERRIDE_FILE_SAVE_AS,               action_ok_override_file_save_as},
          {MENU_ENUM_LABEL_OVERRIDE_UNLOAD,                     action_ok_override_unload},
          {MENU_ENUM_LABEL_PLAYLISTS_TAB,                       action_ok_content_collection_list},
+         {MENU_ENUM_LABEL_GAMEGATE_LIBRARY,                    action_ok_content_collection_list},
          {MENU_ENUM_LABEL_DISK_IMAGE_APPEND,                   action_ok_disk_image_append_list},
          {MENU_ENUM_LABEL_SUBSYSTEM_ADD,                       action_ok_subsystem_add_list},
 #ifdef _3DS

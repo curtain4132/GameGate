@@ -2890,6 +2890,7 @@ int menu_cbs_init_bind_sublabel(menu_file_list_cbs_t *cbs,
       { MENU_ENUM_LABEL_NFS_CLIENT_VERSION, MENU_ENUM_SUBLABEL_NFS_CLIENT_VERSION },
       { MENU_ENUM_LABEL_NFS_CLIENT_READAHEAD, MENU_ENUM_SUBLABEL_NFS_CLIENT_READAHEAD },
 #endif
+      { MENU_ENUM_LABEL_GAMEGATE_LIBRARY, MENU_ENUM_SUBLABEL_GAMEGATE_LIBRARY },
    };
 
    static const sublabel_func_map_t sublabel_func_map[] = {

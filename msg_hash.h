@@ -34904,6 +34904,8 @@ enum msg_hash_enums
    MENU_LABEL(NFS_CLIENT_BROWSE),
 #endif
 
+   MENU_LABEL(GAMEGATE_LIBRARY),
+
    MSG_LAST,
 
    /* Ensure sizeof(enum) == sizeof(int) */

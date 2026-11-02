@@ -502,6 +502,17 @@ const char *msg_hash_to_str(enum msg_hash_enums msg)
    const char *ret = NULL;
 
 #ifdef HAVE_LANGEXTRA
+   if (uint_user_language == RETRO_LANGUAGE_CHINESE_SIMPLIFIED)
+   {
+      switch (msg)
+      {
+#define MSG_HASH(id, text) case id: return text;
+#include "intl/gamegate_msg_hash_chs.h"
+#undef MSG_HASH
+         default:
+            break;
+      }
+   }
    {
       const msg_hash_strtab_t *tab =
             msg_hash_lang_strtab(uint_user_language);

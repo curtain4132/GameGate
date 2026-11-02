@@ -31,6 +31,7 @@ extern const struct msg_hash_us_lbl_blob_s msg_hash_us_lbl_blob;
 #endif
 
 #ifdef HAVE_MENU
+#define MENU_ENUM_LABEL_GAMEGATE_LIBRARY_STR (msg_hash_us_lbl_blob.m_MENU_ENUM_LABEL_GAMEGATE_LIBRARY)
 #define MENU_ENUM_LABEL_ACCOUNTS_CHEEVOS_USERNAME_STR (msg_hash_us_lbl_blob.m_MENU_ENUM_LABEL_ACCOUNTS_CHEEVOS_USERNAME)
 #define MENU_ENUM_LABEL_CHEEVOS_MENU_SUBMENU_STR (msg_hash_us_lbl_blob.m_MENU_ENUM_LABEL_CHEEVOS_MENU_SUBMENU)
 #define MENU_ENUM_LABEL_ACHIEVEMENT_PAUSE_CANCEL_STR (msg_hash_us_lbl_blob.m_MENU_ENUM_LABEL_ACHIEVEMENT_PAUSE_CANCEL)
@@ -1773,6 +1774,7 @@ extern const struct msg_hash_us_lbl_blob_s msg_hash_us_lbl_blob;
 #define MENU_ENUM_LABEL_VIDEO_WINDOW_AUTO_HEIGHT_MAX_STR (msg_hash_us_lbl_blob.m_MENU_ENUM_LABEL_VIDEO_WINDOW_AUTO_HEIGHT_MAX)
 #define MENU_ENUM_LABEL_VIDEO_WINDOW_OPACITY_STR (msg_hash_us_lbl_blob.m_MENU_ENUM_LABEL_VIDEO_WINDOW_OPACITY)
 #else
+#define MENU_ENUM_LABEL_GAMEGATE_LIBRARY_STR "gamegate_library"
 #define MENU_ENUM_LABEL_ACCOUNTS_CHEEVOS_USERNAME_STR "accounts_cheevos_username"
 #define MENU_ENUM_LABEL_CHEEVOS_MENU_SUBMENU_STR "cheevos_menu_submenu"
 #define MENU_ENUM_LABEL_ACHIEVEMENT_PAUSE_CANCEL_STR "achievement_pause_cancel"

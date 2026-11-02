@@ -5567,7 +5567,8 @@ static unsigned menu_displaylist_parse_playlists(
       unsigned type_default,
       const char *path,
       settings_t *settings,
-      bool horizontal)
+      bool horizontal,
+      bool library)
 {
    size_t i, list_size;
    struct string_list str_list  = {0};
@@ -5576,7 +5577,7 @@ static unsigned menu_displaylist_parse_playlists(
    unsigned count               = 0;
    unsigned content_count       = 0;
    bool show_hidden_files       = settings->bools.show_hidden_files;
-   if (!path || !*path)
+   if (!library && (!path || !*path))
    {
       int ret = frontend_driver_parse_drive_list(info_list, true);
       /* TODO/FIXME - we need to know the actual count number here */
@@ -5593,11 +5594,19 @@ static unsigned menu_displaylist_parse_playlists(
    if (!horizontal)
    {
       const char *menu_ident = menu_driver_ident();
-      bool show_add_content  = (settings->uints.menu_content_show_add_entry ==
+      bool show_add_content  = !library && (settings->uints.menu_content_show_add_entry ==
             MENU_ADD_CONTENT_ENTRY_DISPLAY_PLAYLISTS_TAB);
-      bool show_netplay      = (settings->uints.menu_content_show_netplay ==
+      bool show_netplay      = !library && (settings->uints.menu_content_show_netplay ==
             MENU_ADD_CONTENT_ENTRY_DISPLAY_PLAYLISTS_TAB);
-      bool show_history      = !menu_history_in_main_menu(menu_ident, settings);
+      bool show_history      = library || !menu_history_in_main_menu(menu_ident, settings);
+
+      if (library && !settings->bools.kiosk_mode_enable)
+         if (menu_entries_append(info_list,
+                  msg_hash_to_str(MENU_ENUM_LABEL_VALUE_ADD_CONTENT_LIST),
+                  MENU_ENUM_LABEL_ADD_CONTENT_LIST_STR,
+                  MENU_ENUM_LABEL_ADD_CONTENT_LIST,
+                  MENU_SETTING_ACTION, 0, 0, NULL))
+            count++;
 
       if (show_history)
       {
@@ -5640,7 +5649,7 @@ static unsigned menu_displaylist_parse_playlists(
       }
 
 #if defined(HAVE_IMAGEVIEWER) || defined(HAVE_MENU)
-      if (settings->bools.menu_content_show_images && g_defaults.image_history)
+      if (!library && settings->bools.menu_content_show_images && g_defaults.image_history)
          if (menu_entries_append(info_list,
                   playlist_get_conf_path(g_defaults.image_history),
                   MENU_ENUM_LABEL_GOTO_IMAGES_STR,
@@ -5649,7 +5658,7 @@ static unsigned menu_displaylist_parse_playlists(
             count++;
 #endif
 
-      if (settings->bools.menu_content_show_music && g_defaults.music_history)
+      if (!library && settings->bools.menu_content_show_music && g_defaults.music_history)
          if (menu_entries_append(info_list,
                   playlist_get_conf_path(g_defaults.music_history),
                   MENU_ENUM_LABEL_GOTO_MUSIC_STR,
@@ -5658,7 +5667,7 @@ static unsigned menu_displaylist_parse_playlists(
             count++;
 
 #if defined(HAVE_FFMPEG) || defined(HAVE_MPV) || defined(HAVE_WEBMPLAYER)
-      if (settings->bools.menu_content_show_video && g_defaults.video_history)
+      if (!library && settings->bools.menu_content_show_video && g_defaults.video_history)
          if (menu_entries_append(info_list,
                   playlist_get_conf_path(g_defaults.video_history),
                   MENU_ENUM_LABEL_GOTO_VIDEO_STR,
@@ -5684,7 +5693,7 @@ static unsigned menu_displaylist_parse_playlists(
             count++;
 
 #if defined(HAVE_DYNAMIC)
-      if (settings->uints.menu_content_show_contentless_cores !=
+      if (!library && settings->uints.menu_content_show_contentless_cores !=
             MENU_CONTENTLESS_CORES_DISPLAY_NONE)
          if (menu_entries_append(info_list,
                   msg_hash_to_str(MENU_ENUM_LABEL_VALUE_GOTO_CONTENTLESS_CORES),
@@ -5695,7 +5704,7 @@ static unsigned menu_displaylist_parse_playlists(
 #endif
 
 #if defined(HAVE_LIBRETRODB)
-      if (settings->bools.menu_content_show_explore)
+      if (!library && settings->bools.menu_content_show_explore)
          if (menu_entries_append(info_list,
                   msg_hash_to_str(MENU_ENUM_LABEL_VALUE_GOTO_EXPLORE),
                   MENU_ENUM_LABEL_GOTO_EXPLORE_STR,
@@ -5704,6 +5713,10 @@ static unsigned menu_displaylist_parse_playlists(
             count++;
 #endif
    }
+
+   if (library && (!settings->bools.menu_content_show_playlists
+         || !path || !*path))
+      return count;
 
    if (horizontal)
    {
@@ -5745,7 +5758,7 @@ static unsigned menu_displaylist_parse_playlists(
    list_size = str_list.size;
 
 #if defined(HAVE_LIBRETRODB)
-   if (settings->bools.menu_content_show_explore)
+   if (!library && settings->bools.menu_content_show_explore)
    {
       char lbl[NAME_MAX_LENGTH];
       size_t _len = strlcpy(lbl, msg_hash_to_str(MENU_ENUM_LABEL_EXPLORE_VIEW),
@@ -17760,6 +17773,13 @@ static bool menu_displaylist_ctl_internal(
                      && settings->bools.menu_content_show_playlist_tabs)
                   show_playlists = false;
 
+               if (menu_entries_append(info->list,
+                        msg_hash_to_str(MENU_ENUM_LABEL_VALUE_GAMEGATE_LIBRARY),
+                        MENU_ENUM_LABEL_GAMEGATE_LIBRARY_STR,
+                        MENU_ENUM_LABEL_GAMEGATE_LIBRARY,
+                        MENU_SETTING_ACTION, 0, 0, NULL))
+                  count++;
+
                if (flags & RUNLOOP_FLAG_CORE_RUNNING)
                {
                   if (!retroarch_ctl(RARCH_CTL_IS_DUMMY_CORE, NULL))
@@ -18431,6 +18451,7 @@ static bool menu_displaylist_ctl_internal(
             load_content       = false;
             use_filebrowser    = true;
             break;
+         case DISPLAYLIST_GAMEGATE_LIBRARY:
          case DISPLAYLIST_DATABASE_PLAYLISTS:
          case DISPLAYLIST_DATABASE_PLAYLISTS_HORIZONTAL:
             {
@@ -18439,7 +18460,8 @@ static bool menu_displaylist_ctl_internal(
                menu_entries_clear(info->list);
                count =  menu_displaylist_parse_playlists(info->list,
                      info->type_default, info->path,
-                     settings, is_horizontal);
+                     settings, is_horizontal,
+                     type == DISPLAYLIST_GAMEGATE_LIBRARY);
 
                if (count == 0 && !is_horizontal)
                   menu_entries_append(info->list,

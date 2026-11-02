@@ -1,6 +1,10 @@
 
 
 MSG_HASH(
+   MENU_ENUM_LABEL_GAMEGATE_LIBRARY,
+   "gamegate_library"
+   )
+MSG_HASH(
    MENU_ENUM_LABEL_ACCOUNTS_CHEEVOS_USERNAME,
    "accounts_cheevos_username"
    )
