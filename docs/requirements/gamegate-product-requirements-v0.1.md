@@ -237,7 +237,7 @@ Windows 优先、JSON 源协议、首版具体 UI 和中英文发布范围均为
 - 上游参考目录：`D:\Project\XJ\Game-Gate\Code_Source\RetroArch`。
 - 产品目录：`D:\Project\XJ\Game-Gate\Code_Source\GameGate`。
 - 已完成 Windows 原版构建、菜单启动和 2048 动态核心冒烟测试；未完成业务实现。
-- 2026-11-02 已建立保留上游历史的 GameGate 独立 Git 仓库，设有 main、develop 分支；官方远端为 upstream，产品 origin 尚未配置。仓库规则见 [开发仓库说明](../development/repository-workflow.md)。
+- 2026-11-02 已建立保留上游历史的 GameGate 独立 Git 仓库，设有 main、develop 分支；官方远端为 upstream，产品 origin 已连接 [curtain4132/GameGate](https://github.com/curtain4132/GameGate)，本地产品分支尚未推送。仓库规则见 [开发仓库说明](../development/repository-workflow.md)。
 - 构建结果、警告和限制详见 [Windows 验证记录](../research/2026-11-02-retroarch-windows-baseline.md)。
 
 ### 建议阶段

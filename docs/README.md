@@ -8,7 +8,7 @@
 
 ## 当前明确方向
 
-本地开发仓库已建立，使用方式见 [开发仓库说明](development/repository-workflow.md)。日常从 develop 开发，官方远端为 upstream，产品 origin 暂未配置。
+本地开发仓库已建立，使用方式见 [开发仓库说明](development/repository-workflow.md)。日常从 develop 开发，官方远端为 upstream，产品 origin 已连接到 [curtain4132/GameGate](https://github.com/curtain4132/GameGate)，本地产品分支尚未推送。
 
 - 基于 RetroArch 二次开发，接受 GPL-3.0 开源分发义务。
 - 游戏只能在 App 内运行，不采用外部模拟器启动模式。

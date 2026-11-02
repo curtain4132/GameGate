@@ -26,11 +26,12 @@
 ## 3. 远端
 
 - `upstream`：`https://github.com/libretro/RetroArch.git`，用于获取官方更新。
-- `origin`：暂未配置，等待产品仓库地址。
-- 本次没有创建 GitHub 远端 Fork、远端产品仓库或执行推送。
+- `origin`：`https://github.com/curtain4132/GameGate.git`，用户已创建的 GitHub Fork，用于保存 GameGate 开发成果。
+- 2026-11-02 已获取 origin/master，其提交为 `11e8931021eb6b7fa69c04f52dd5d385841fdbbe`，与本地上游基线一致，没有历史分叉。
+- 远端当前默认分支为 master；本地 main、develop 和基线标签尚未推送，未修改远端默认分支。
 - Git 默认会为 upstream 显示相同 fetch／push 地址；没有设置阻止推送的技术屏障，操作时明确不要向 upstream 推送 GameGate 改动。
 
-用户提供产品远端后，再配置 origin 并明确首次推送范围；不能把建立本地仓库视为自动发布授权。
+连接 origin 和获取远端引用不等于推送。首次推送范围建议为 main、develop 及 `gamegate-base/retroarch-11e8931021eb` 标签，确认发布范围后再执行；其后可将产品默认分支设为 main，保留远端 master。
 
 ## 4. 开发与提交规则
 
