@@ -11,6 +11,17 @@
 - 实际stdin命令是MENU show/open/a/b/type，不存在GET MENU。KEYBOARD后MENU type自动提交；每条等完整答复，不能连续覆盖pending。
 - MAIN_THREAD|MUTE原生task可让服务poll稳定在前端线程，不需改runloop；worker-only store需独立后台调度并发布只读快照。所有管理callback再次检查kiosk，kiosk只浏览已启用缓存。
 
+## 2026-11-04 GG-002 早期归档
+
+> 以下为隔离续作之前的历史记录，保留当时状态；不代表当前仍在等待或阻塞。原始文档提交：`45f62a5c63`。
+
+- 用户已确认静态JSON游戏源设计，A包实现者d662e539-9b3e-47fd-84e4-7b048e8ba820未交接前不重派写任务。
+- rjson支持严格UTF8、最大深度及事件式读取，A包复用不改共享库。
+- task_http.c已有流式sink及读取预算，但net_http.c:1746 TLS握手仍同步；不能把任务接口等同全程非阻塞。
+- net_http.h:70明确DNS缓存/连接池由单一驱动线程拥有，独立worker不可与已有任务并发共享net_http。
+- B包需解决有界接收、TLS/重定向、取消/代次；不能关闭证书验证。具体扩展仍在研究。
+- 研究子代理08243388-22aa-4ff5-898f-41e6754a086b发来早期发现；send_message对其ID报active teammate not found，list_agents仅lead。等待完成通知，不据消息工具错误判断子任务已经停止。
+
 ## 2026-11-02 第一批启动
 
 - 起始工作区干净，HEAD 为 9fa533cecd2ffddcfc4fa29fe07fea320577442f。

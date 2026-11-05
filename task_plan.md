@@ -40,3 +40,7 @@ VS2022 BuildTools：C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildToo
 产物仅本checkout artifacts/static-sources/，主验收使用lead/子目录。真实模型/URL/fallback测试，不以源码文本搜索替代执行。Linux/MinGW未发现工具链，不能假装通过。
 
 主Agent保存审查前后源码内容、哈希、diff、未跟踪列表。保持C89与上游线程/栈预算规则。旧本地游戏库和便携资产不修改。
+
+## 2026-11-05 文档归档合并
+
+原工作区5份启动阶段文档已原样提交为 `45f62a5c63`，并并入 develop。早期研究与进度作为历史保留在 findings.md / progress.md；本文件保留后续已完成的验收状态，避免恢复为早期“等待/阻塞”。原始启动计划可从该提交中的 task_plan.md 查阅。已完成代码提交为 `85ea029c75`，已合入 develop；未推送远端。

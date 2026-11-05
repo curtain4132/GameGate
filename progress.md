@@ -46,6 +46,24 @@
 
 
 
+## 2026-11-04 GG-002 早期归档 启动
+
+> 以下为隔离续作之前的历史记录，保留当时状态；不代表当前仍在等待或阻塞。原始文档提交：`45f62a5c63`。
+
+- 用户确认静态JSON游戏源设计并授权继续实现。
+- 基线73100fda362b8622981daa2163cff1bc2d6a39cb，tracked/staged为空；已有未跟踪设计文档由主Agent创建，保留。
+- 任务包GG-002A，functions.subagent_codex实现目录协议/模型及测试；仅gamegate/catalog.c/h和samples/gamegate/catalog/写域，不改菜单/运行核心/libretro-common/文档。调用ID d662e539-9b3e-47fd-84e4-7b048e8ba820，已启动待交接。
+- GG-002B预研：functions.subagent，ID08243388-22aa-4ff5-898f-41e6754a086b，只读检查HTTPS限额/重定向/TLS/任务生命周期，不写任何代码；与A实现无写域重叠。
+- 普通只读研究可并行检查HTTPS有界接收/缓存/生命周期；不得写代码或替代Codex与Claude。
+- 主Agent完成实际独立测试后交functions.subagent_claude_code只读审查，每次审查前后校验内容和SHA256。
+- 验证以MSVC真实C程序和相关生成/菜单检查为准；完整UI与HTTPS生命周期在后两包，不能以parser通过冒充GG-002完成。
+- 全链修复计数0/2。未授权推送，不修改认证或安装依赖。
+- 自动续跑第1轮检查：当前业务源码尚无写入，A实现子任务未发完成通知；不重复派发写任务，不据进程列表猜测任务已终止。
+- 已独立核查net_http.c:1746和net_socket_ssl_retro.c:2355：retro TLS连接忽略nonblock参数并同步完成握手；net_http.h:70规定全局缓存/连接池单线程驱动。这是B包接入设计约束，不是已修复问题。
+- 实施计划已落盘docs/superpowers/plans/2026-11-04-static-game-sources-implementation.md。重新检查MSVC可用，PATH无gcc/clang/make/docker；测试环境限制没有被忽略。
+- 第2轮：使用FileSystemWatcher有界等待45秒，无catalog文件创建事件；未忙轮询。额外只读Codex探测fc4ffe30-c746-49c2-aabe-435e675ed449成功执行git rev-parse HEAD并完成，证明后端可达，但不证明原实现者已停止。原A任务仍无完成/取消确认，不重新分配其写域。
+- 独立研究确认vfs_implementation.c:2193通过MoveFileExW(MOVEFILE_REPLACE_EXISTING)支持Windows目的文件替换，B包可复用文件流rename能力，不能因此承诺跨所有VFS提供者的断电事务原子性。
+
 ## 2026-11-02 第一批任务启动
 
 - 用户要求开始任务。
