@@ -734,7 +734,8 @@ int net_http_urldecode(char *dst, size_t dst_size, const char *src)
 
 int net_http_urldecode_inplace(char *s)
 {
-   return string_percent_decode(s, (size_t)-1, s);
+   /* Decoding never grows the string, so its own size is the bound */
+   return string_percent_decode(s, strlen(s) + 1, s);
 }
 
 /* Base64 "user:pass" for Basic auth, from a URL's userinfo. */
@@ -748,7 +749,7 @@ static char *net_http_basic_auth(const char *userinfo, size_t len)
       return NULL;
    memcpy(raw, userinfo, len);
    raw[len] = '\0';
-   out = base64(raw, net_http_urldecode_inplace(raw), &flen);
+   out = base64(raw, string_percent_decode(raw, len + 1, raw), &flen);
    free(raw);
    return out;
 }
@@ -1893,6 +1894,7 @@ static bool net_http_build_head(struct http_t *state)
    const char *method      = request->method ? request->method : "GET";
    bool body_method        = request->method && request->method[0] == 'P';
    size_t cap              = 192
+      + STRLEN_CONST("Accept-Encoding: identity\r\n")
       + strlen(method) + strlen(request->path) + strlen(request->domain)
       + (request->headers     ? strlen(request->headers)     : 0)
       + (request->auth        ? strlen(request->auth)
@@ -1940,6 +1942,9 @@ static bool net_http_build_head(struct http_t *state)
             (long long unsigned)request->contentlength);
 #endif
    }
+   /* The body reaches callers as sent: no content coding is decoded,
+    * so none is accepted. Without this header a server may pick any. */
+   n = net_http_put(h, n, "Accept-Encoding: identity\r\n");
    n = net_http_put(h, n, "User-Agent: ");
    n = net_http_put(h, n, request->useragent ? request->useragent : "libretro");
    n = net_http_put(h, n, "\r\n\r\n");

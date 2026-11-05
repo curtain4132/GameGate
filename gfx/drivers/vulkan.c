@@ -123,6 +123,21 @@
 
 #define VK_REMAP_TO_TEXFMT(fmt) ((fmt == VK_FORMAT_R5G6B5_UNORM_PACK16) ? VK_FORMAT_R8G8B8A8_UNORM : fmt)
 
+/* Maps a texture's whole allocation, so the whole-size flushes and
+ * invalidates issued from offset 0 lie inside the mapping, and points
+ * at its texels, which a linear image may place past offset 0. NULL
+ * when the map fails. */
+#define VULKAN_MAP_TEXTURE(device, tex, out) \
+   do \
+   { \
+      void *vk_map_base_ = NULL; \
+      if (vkMapMemory((device), (tex)->memory, 0, VK_WHOLE_SIZE, 0, \
+               &vk_map_base_) == VK_SUCCESS) \
+         (out) = (uint8_t*)vk_map_base_ + (tex)->offset; \
+      else \
+         (out) = NULL; \
+   } while (0)
+
 /* Pick a 10-bit (XRGB2101010) sampled-image format the GPU can actually use.
  *
  * Frames/thumbnails are packed XRGB2101010 in memory: R in bits [29:20],
@@ -610,6 +625,9 @@ typedef struct vk
       VkDescriptorSetLayout set_layout;
       VkPipelineLayout layout;
       VkPipelineCache cache;
+      /* Bytes of cache data last read from or written to disk, so an
+       * unchanged cache is not written again on deinit */
+      size_t cache_disk_size;
    } pipelines;
 
    struct
@@ -833,11 +851,11 @@ typedef struct
    unsigned acc_count;
    unsigned acc_cap;
 
-   /* The staging texture's region not yet sent to the sampled one:
-    * its corners, the second exclusive, in VIDEO_SCALE_PACK's layout.
-    * Empty when the first is past the second. */
-   unsigned dirty_xy0;
-   unsigned dirty_xy1;
+   /* The staging texture's regions not yet sent to the sampled one:
+    * each its corners, the second exclusive, in VIDEO_SCALE_PACK's
+    * layout (font_dirty_rects_add() keeps them) */
+   unsigned dirty_rect[FONT_ATLAS_DIRTY_MAX][2];
+   unsigned dirty_rects;
 
    bool needs_update;
 } vulkan_raster_t;
@@ -2406,30 +2424,13 @@ static struct vk_texture vulkan_create_texture(vk_t *vk,
     * the frames that could reference it. A size change is rare; the
     * allocation it costs is not per frame. */
    if (old)
-   {
       vulkan_texture_defer_copy(vk, old);
-      old = NULL;
-   }
 
    if (tex.flags & VK_TEX_FLAG_BAR_MAPPED)
    {
       vulkan_debug_mark_memory(device, tex.memory);
       tex.memory_size = alloc.allocationSize;
       tex.memory_type = alloc.memoryTypeIndex;
-   }
-   /* We can pilfer the old memory and move it over to the new texture. */
-   else if (old
-         && old->memory_size >= mem_reqs.size
-         && old->memory_type == alloc.memoryTypeIndex)
-   {
-      tex.memory      = old->memory;
-      tex.memory_size = old->memory_size;
-      tex.memory_type = old->memory_type;
-
-      if (old->mapped)
-         vkUnmapMemory(device, old->memory);
-
-      old->memory     = VK_NULL_HANDLE;
    }
    else
    {
@@ -2441,43 +2442,12 @@ static struct vk_texture vulkan_create_texture(vk_t *vk,
             vkDestroyImage(device, tex.image, NULL);
          if (tex.buffer)
             vkDestroyBuffer(device, tex.buffer, NULL);
-         /* The `if (old)` cleanup further below is skipped by this
-          * early return, but old->view/image/buffer were already
-          * destroyed at the top of the `if (old)` block above and
-          * old->memory still owns a live VkDeviceMemory.  Free it
-          * here, otherwise it leaks across the call.  Mirrors the
-          * unmap-before-free done in the pilfer branch. */
-         if (old)
-         {
-            if (old->mapped)
-               vkUnmapMemory(device, old->memory);
-            if (old->memory != VK_NULL_HANDLE)
-               vkFreeMemory(device, old->memory, NULL);
-            memset(old, 0, sizeof(*old));
-         }
          memset(&tex, 0, sizeof(tex));
          return tex;
       }
       vulkan_debug_mark_memory(device, tex.memory);
       tex.memory_size = alloc.allocationSize;
       tex.memory_type = alloc.memoryTypeIndex;
-   }
-
-   if (old)
-   {
-      /* old->view/image/buffer were already destroyed at the top of
-       * the `if (old)` block above.  In the no-pilfer path we did not
-       * take ownership of old->memory, so it still owns a live
-       * VkDeviceMemory; free it here.  Unmap first to mirror the
-       * pilfer branch and to avoid free-while-mapped, which the spec
-       * permits but MoltenVK has historically handled poorly. */
-      if (old->memory != VK_NULL_HANDLE)
-      {
-         if (old->mapped)
-            vkUnmapMemory(device, old->memory);
-         vkFreeMemory(device, old->memory, NULL);
-      }
-      memset(old, 0, sizeof(*old));
    }
 
    if (tex.image)
@@ -2558,7 +2528,9 @@ static struct vk_texture vulkan_create_texture(vk_t *vk,
                size_t stride      = (size_t)VIDEO_SCALE_W(tex.dims) * (size_t)bpp;
                size_t row_bytes   = (size_t)width     * (size_t)bpp;
 
-               vkMapMemory(device, tex.memory, tex.offset, tex.size, 0, &ptr);
+               VULKAN_MAP_TEXTURE(device, &tex, ptr);
+               if (!ptr)
+                  break;
 
                dst                = (uint8_t*)ptr;
                src                = (const uint8_t*)initial;
@@ -4029,36 +4001,43 @@ static void gfx_display_vk_scissor_end(void *data, unsigned video_dims)
  * FONT DRIVER
  */
 
-/* Copies the atlas's dirty region into the staging texture and adds it
- * to what the next upload sends. Whole cells go across, so no texel of
- * a cell's earlier glyph is left beside a smaller one for filtering to
- * pick up. */
+/* Copies each of the atlas's dirty rectangles into the staging texture
+ * and adds it to what the next upload sends, as much of it as the
+ * texture holds - an atlas the textures could not follow is larger than
+ * them. Whole cells go across, so no texel of a cell's earlier glyph is
+ * left beside a smaller one for filtering to pick up. */
 static INLINE void vulkan_font_update_dirty(vulkan_raster_t *font)
 {
-   unsigned row;
-   unsigned x0 = VIDEO_SCALE_W(font->atlas->dirty_xy0);
-   unsigned y0 = VIDEO_SCALE_H(font->atlas->dirty_xy0);
-   unsigned x1 = VIDEO_SCALE_W(font->atlas->dirty_xy1);
-   unsigned y1 = VIDEO_SCALE_H(font->atlas->dirty_xy1);
+   unsigned i, row;
+   unsigned n  = font_atlas_dirty_rects(font->atlas);
+   unsigned tw = VIDEO_SCALE_W(font->texture.dims);
+   unsigned th = VIDEO_SCALE_H(font->texture.dims);
    size_t esz  = (font->atlas->format == FONT_ATLAS_FORMAT_A16)
          ? sizeof(uint16_t) : sizeof(uint8_t);
 
-   /* A region past the textures' size - the atlas grew and they could
-    * not be made again - has nowhere to go */
-   if (     x1 <= x0 || y1 <= y0
-         || x1 > VIDEO_SCALE_W(font->texture.dims)
-         || y1 > VIDEO_SCALE_H(font->texture.dims))
-      return;
-
-   for (row = y0; row < y1; row++)
-      memcpy((uint8_t*)font->texture.mapped
-               + (size_t)row * font->texture.stride + (size_t)x0 * esz,
-            font->atlas->buffer
-               + ((size_t)row * font->atlas->width + x0) * esz,
-            (size_t)(x1 - x0) * esz);
-
-   font->dirty_xy0 = VIDEO_SCALE_MIN(font->dirty_xy0, font->atlas->dirty_xy0);
-   font->dirty_xy1 = VIDEO_SCALE_MAX(font->dirty_xy1, font->atlas->dirty_xy1);
+   for (i = 0; i < n; i++)
+   {
+      unsigned xy0, xy1, x0, y0, x1, y1;
+      font_atlas_dirty_rect(font->atlas, i, &xy0, &xy1);
+      x0 = VIDEO_SCALE_W(xy0);
+      y0 = VIDEO_SCALE_H(xy0);
+      x1 = VIDEO_SCALE_W(xy1);
+      y1 = VIDEO_SCALE_H(xy1);
+      if (x1 > tw)
+         x1 = tw;
+      if (y1 > th)
+         y1 = th;
+      if (x1 <= x0 || y1 <= y0)
+         continue;
+      for (row = y0; row < y1; row++)
+         memcpy((uint8_t*)font->texture.mapped
+                  + (size_t)row * font->texture.stride + (size_t)x0 * esz,
+               font->atlas->buffer
+                  + ((size_t)row * font->atlas->width + x0) * esz,
+               (size_t)(x1 - x0) * esz);
+      font_dirty_rects_add(font->dirty_rect, &font->dirty_rects,
+            xy0, VIDEO_SCALE_PACK(x1, y1));
+   }
 }
 
 /* Makes the staging and the sampled texture anew at the atlas's size,
@@ -4082,7 +4061,7 @@ static void vulkan_font_follow_atlas(vulkan_raster_t *font)
    if (staging.memory == VK_NULL_HANDLE)
       return;
    if (vkMapMemory(font->vk->context->device, staging.memory,
-            staging.offset, staging.size, 0, &staging.mapped)
+            staging.offset, VK_WHOLE_SIZE, 0, &staging.mapped)
          != VK_SUCCESS)
    {
       staging.mapped = NULL;
@@ -4103,8 +4082,9 @@ static void vulkan_font_follow_atlas(vulkan_raster_t *font)
    font->texture         = staging;
    font->texture_optimal = optimal;
    font->atlas->dirty    = false;
-   font->dirty_xy0       = 0;
-   font->dirty_xy1       = VIDEO_SCALE_PACK(font->atlas->width,
+   font->dirty_rects     = 1;
+   font->dirty_rect[0][0] = 0;
+   font->dirty_rect[0][1] = VIDEO_SCALE_PACK(font->atlas->width,
          font->atlas->height);
    font->needs_update    = true;
 }
@@ -4202,7 +4182,7 @@ static void *vulkan_font_init(void *data,
       {
          struct vk_texture *texture = &font->texture;
          if (vkMapMemory(font->vk->context->device, texture->memory,
-                  texture->offset, texture->size, 0, &texture->mapped)
+                  texture->offset, VK_WHOLE_SIZE, 0, &texture->mapped)
                != VK_SUCCESS)
          {
             /* pData is only written on success. */
@@ -4225,8 +4205,9 @@ static void *vulkan_font_init(void *data,
          font->vk->context->gpu_properties.limits.maxImageDimension2D);
 
    /* Initial upload is full atlas. */
-   font->dirty_xy0    = 0;
-   font->dirty_xy1    = VIDEO_SCALE_PACK(font->atlas->width,
+   font->dirty_rects      = 1;
+   font->dirty_rect[0][0] = 0;
+   font->dirty_rect[0][1] = VIDEO_SCALE_PACK(font->atlas->width,
          font->atlas->height);
    font->needs_update = true;
 
@@ -4304,79 +4285,108 @@ static void vulkan_font_upload_atlas(vk_t *vk, vulkan_raster_t *font)
       if (!bpp)
          bpp                         = 1;
 
-      if (  (staging_tex->flags
-               & VK_TEX_FLAG_NEED_MANUAL_CACHE_MANAGEMENT)
-            && staging_tex->memory != VK_NULL_HANDLE)
       {
-         VkMappedMemoryRange mem_range;
-         VkDeviceSize flush_size;
-         /* Use nonCoherentAtomSize for alignment;
-          * fall back to 256 (common minimum) if unavailable. */
-         VkDeviceSize atom_size    = 256;
+         /* Each region clamped to the staging texture bounds both its
+          * flush and its copy; one clamped to nothing - the atlas grew
+          * and the textures could not follow - is dropped */
+         VkBufferImageCopy   region[FONT_ATLAS_DIRTY_MAX];
+         VkMappedMemoryRange mem_range[FONT_ATLAS_DIRTY_MAX];
+         unsigned sw   = VIDEO_SCALE_W(staging_tex->dims);
+         unsigned sh   = VIDEO_SCALE_H(staging_tex->dims);
+         unsigned i, kept = 0;
+         bool manual   = (staging_tex->flags
+                  & VK_TEX_FLAG_NEED_MANUAL_CACHE_MANAGEMENT)
+               && staging_tex->memory != VK_NULL_HANDLE;
+         bool full_copy;
 
-         /* Compute tight flush range from dirty rectangle
-          * instead of flushing the entire allocation.
-          * Aligns offset down and size up to nonCoherentAtomSize
-          * as required by the spec (Â§12.1). */
-         unsigned y1               = VIDEO_SCALE_H(font->dirty_xy1);
-         VkDeviceSize flush_offset = (VkDeviceSize)
-                        VIDEO_SCALE_H(font->dirty_xy0) * staging_tex->stride
-                      + (VkDeviceSize)VIDEO_SCALE_W(font->dirty_xy0) * bpp;
-         VkDeviceSize flush_end    = (VkDeviceSize)(y1 > 0 ? (y1 - 1) : 0)
-                      * staging_tex->stride
-                      + (VkDeviceSize)VIDEO_SCALE_W(font->dirty_xy1) * bpp;
-         if (flush_end <= flush_offset)
-            flush_end = flush_offset + 1;
-         flush_size   = flush_end - flush_offset;
-
-         /* Align to nonCoherentAtomSize boundaries. */
-         flush_size   = flush_size + (flush_offset & (atom_size - 1));
-         flush_offset = flush_offset & ~(atom_size - 1);
-         flush_size   = (flush_size + atom_size - 1) & ~(atom_size - 1);
-
-         /* Clamp to allocation size. */
-         if (flush_offset + flush_size > staging_tex->size)
-            flush_size = VK_WHOLE_SIZE;
-
-         mem_range.sType  = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
-         mem_range.pNext  = NULL;
-         mem_range.memory = staging_tex->memory;
-         mem_range.offset = flush_offset;
-         mem_range.size   = flush_size;
-         vkFlushMappedMemoryRanges(vk->context->device, 1, &mem_range);
-      }
-
-      {
-         unsigned dx = VIDEO_SCALE_W(font->dirty_xy0);
-         unsigned dy = VIDEO_SCALE_H(font->dirty_xy0);
-         unsigned dw = VIDEO_SCALE_W(font->dirty_xy1) - dx;
-         unsigned dh = VIDEO_SCALE_H(font->dirty_xy1) - dy;
-         unsigned sw = VIDEO_SCALE_W(staging_tex->dims);
-         unsigned sh = VIDEO_SCALE_H(staging_tex->dims);
-
-         if (dx >= sw || dy >= sh)
-            dw = dh = 0;
-         else
+         for (i = 0; i < font->dirty_rects && i < FONT_ATLAS_DIRTY_MAX; i++)
          {
-            if (dx + dw > sw)
-               dw = sw - dx;
-            if (dy + dh > sh)
-               dh = sh - dy;
+            unsigned dx = VIDEO_SCALE_W(font->dirty_rect[i][0]);
+            unsigned dy = VIDEO_SCALE_H(font->dirty_rect[i][0]);
+            unsigned x1 = VIDEO_SCALE_W(font->dirty_rect[i][1]);
+            unsigned y1 = VIDEO_SCALE_H(font->dirty_rect[i][1]);
+            unsigned dw, dh;
+            if (x1 > sw)
+               x1 = sw;
+            if (y1 > sh)
+               y1 = sh;
+            if (x1 <= dx || y1 <= dy)
+               continue;
+            dw = x1 - dx;
+            dh = y1 - dy;
+
+            if (manual)
+            {
+               /* 256 is the largest nonCoherentAtomSize the spec
+                * allows, so a range aligned to it is aligned on every
+                * device. */
+               VkDeviceSize atom_size    = 256;
+               VkDeviceSize flush_offset = (VkDeviceSize)dy * staging_tex->stride
+                                         + (VkDeviceSize)dx * bpp;
+               VkDeviceSize flush_end    = (VkDeviceSize)(dy + dh - 1)
+                                         * staging_tex->stride
+                                         + (VkDeviceSize)(dx + dw) * bpp;
+               VkDeviceSize flush_size;
+               flush_offset = flush_offset & ~(atom_size - 1);
+               flush_size   = (flush_end - flush_offset + atom_size - 1)
+                            & ~(atom_size - 1);
+               /* Past the texture's bytes: to the allocation's end,
+                * which the whole-allocation mapping reaches. */
+               if (flush_offset + flush_size > staging_tex->size)
+                  flush_size = VK_WHOLE_SIZE;
+               mem_range[kept].sType  = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+               mem_range[kept].pNext  = NULL;
+               mem_range[kept].memory = staging_tex->memory;
+               mem_range[kept].offset = flush_offset;
+               mem_range[kept].size   = flush_size;
+            }
+
+            /* bufferOffset is in bytes; bufferRowLength is in
+             * TEXELS. For R8 the two coincide with the byte stride,
+             * for R16 they do not. */
+            region[kept].bufferOffset                    =
+               (VkDeviceSize)dy * staging_tex->stride
+                  + (VkDeviceSize)dx * bpp;
+            region[kept].bufferRowLength                 =
+               (uint32_t)(staging_tex->stride / bpp);
+            region[kept].bufferImageHeight               = 0;
+            region[kept].imageSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+            region[kept].imageSubresource.mipLevel       = 0;
+            region[kept].imageSubresource.baseArrayLayer = 0;
+            region[kept].imageSubresource.layerCount     = 1;
+            region[kept].imageOffset.x                   = (int32_t)dx;
+            region[kept].imageOffset.y                   = (int32_t)dy;
+            region[kept].imageOffset.z                   = 0;
+            region[kept].imageExtent.width               = dw;
+            region[kept].imageExtent.height              = dh;
+            region[kept].imageExtent.depth               = 1;
+            kept++;
          }
 
-         if (dw > 0 && dh > 0)
+         if (!kept)
+         {
+            font->dirty_rects  = 0;
+            font->needs_update = false;
+            return;
+         }
+
+         if (manual)
+            vkFlushMappedMemoryRanges(vk->context->device, kept, mem_range);
+
+         /* UNDEFINED as oldLayout lets the implementation discard the
+          * whole image. That is only sound when the copy rewrites every
+          * texel - the initial full-atlas upload. Later uploads are
+          * incremental rects covering a few glyphs, and must preserve
+          * what lies outside them. */
+         full_copy =    kept == 1
+                     && region[0].imageOffset.x == 0
+                     && region[0].imageOffset.y == 0
+                     && region[0].imageExtent.width
+                        == VIDEO_SCALE_W(dynamic_tex->dims)
+                     && region[0].imageExtent.height
+                        == VIDEO_SCALE_H(dynamic_tex->dims);
          {
             VkCommandBuffer staging_cmd = vulkan_upload_batch_cmd(vk);
-            VkBufferImageCopy region;
-            /* UNDEFINED as oldLayout lets the implementation discard
-             * the whole image. That is only sound when the copy
-             * rewrites every texel - the initial full-atlas upload.
-             * Later uploads are incremental rects covering a single
-             * glyph, and must preserve what lies outside them. */
-            bool full_copy              = (   dx == 0
-                                           && dy == 0
-                                           && dw == VIDEO_SCALE_W(dynamic_tex->dims)
-                                           && dh == VIDEO_SCALE_H(dynamic_tex->dims));
             VkImageLayout old_layout    = full_copy
                ? VK_IMAGE_LAYOUT_UNDEFINED
                : dynamic_tex->layout;
@@ -4403,33 +4413,13 @@ static void vulkan_font_upload_atlas(vk_t *vk, vulkan_raster_t *font)
                      : VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                   VK_PIPELINE_STAGE_TRANSFER_BIT);
 
-            /* bufferOffset is in bytes; bufferRowLength is in
-             * TEXELS. For R8 the two coincide with the byte stride,
-             * for R16 they do not. */
-            region.bufferOffset                    =
-               (VkDeviceSize)dy * staging_tex->stride
-                  + (VkDeviceSize)dx * bpp;
-            region.bufferRowLength                 =
-               (uint32_t)(staging_tex->stride / bpp);
-            region.bufferImageHeight               = 0;
-            region.imageSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-            region.imageSubresource.mipLevel       = 0;
-            region.imageSubresource.baseArrayLayer = 0;
-            region.imageSubresource.layerCount     = 1;
-            region.imageOffset.x                   = (int32_t)dx;
-            region.imageOffset.y                   = (int32_t)dy;
-            region.imageOffset.z                   = 0;
-            region.imageExtent.width               = dw;
-            region.imageExtent.height              = dh;
-            region.imageExtent.depth               = 1;
-
             vkCmdCopyBufferToImage(
                   staging_cmd,
                   staging_tex->buffer,
                   dynamic_tex->image,
                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                  1,
-                  &region);
+                  kept,
+                  region);
 
             VULKAN_IMAGE_LAYOUT_TRANSITION(
                   staging_cmd,
@@ -4448,12 +4438,7 @@ static void vulkan_font_upload_atlas(vk_t *vk, vulkan_raster_t *font)
             dynamic_tex->layout =
                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-            /* Reset only on a real upload. Clearing the dirty box
-             * after a rect that clamped away stranded that glyph's
-             * staging write permanently. */
-            font->dirty_xy0    = VIDEO_SCALE_PACK(font->atlas->width,
-                  font->atlas->height);
-            font->dirty_xy1    = 0;
+            font->dirty_rects  = 0;
             font->needs_update = false;
          }
       }
@@ -6233,7 +6218,7 @@ static void vulkan_init_textures(vk_t *vk)
 
          {
             struct vk_texture *texture = &vk->swapchain[i].texture;
-            vkMapMemory(vk->context->device, texture->memory, texture->offset, texture->size, 0, &texture->mapped);
+            VULKAN_MAP_TEXTURE(vk->context->device, texture, texture->mapped);
          }
 
          if (vk->swapchain[i].texture.type == VULKAN_TEXTURE_STAGING)
@@ -7220,22 +7205,140 @@ static void vulkan_deinit_quad_ibo(vk_t *vk)
    vk->quad_ibo.num_quads  = 0;
 }
 
-static void vulkan_init_static_resources(vk_t *vk)
+/* The pipeline cache is kept on disk between runs, one file per GPU, so
+ * the stock and slang shader pipelines are not compiled from scratch by
+ * the driver on every launch, preset load and driver reinit. The file
+ * is keyed by vendor and device ID; a driver update changes the cache
+ * UUID, which the header check below rejects, and the next deinit
+ * writes a fresh one over it. */
+static void vulkan_pipeline_cache_key(const VkPhysicalDeviceProperties *p,
+      char *s, size_t len)
 {
-   int i;
-   uint32_t blank[4 * 4];
-   VkCommandPoolCreateInfo pool_info;
-   VkPipelineCacheCreateInfo cache;
+   snprintf(s, len, "vk%08x%08x",
+         (unsigned)p->vendorID, (unsigned)p->deviceID);
+}
 
-   /* Create the pipeline cache. */
+static uint32_t vulkan_pipeline_cache_read_le32(const uint8_t *d)
+{
+   return  (uint32_t)d[0]
+        | ((uint32_t)d[1] <<  8)
+        | ((uint32_t)d[2] << 16)
+        | ((uint32_t)d[3] << 24);
+}
+
+/* VkPipelineCacheHeaderVersionOne, which the spec stores little-endian
+ * whatever the host byte order. The driver should reject data it cannot
+ * use by itself, but some have crashed on foreign data instead, so a
+ * blob from another GPU or driver never reaches it. */
+static bool vulkan_pipeline_cache_header_ok(const uint8_t *d, int64_t len,
+      const VkPhysicalDeviceProperties *p)
+{
+   uint32_t header_size;
+   if (len < 16 + VK_UUID_SIZE)
+      return false;
+   header_size = vulkan_pipeline_cache_read_le32(d);
+   if (     header_size < 16 + VK_UUID_SIZE
+         || (int64_t)header_size > len)
+      return false;
+   if (     vulkan_pipeline_cache_read_le32(d + 4)
+         != VK_PIPELINE_CACHE_HEADER_VERSION_ONE)
+      return false;
+   if (     vulkan_pipeline_cache_read_le32(d + 8)  != p->vendorID
+         || vulkan_pipeline_cache_read_le32(d + 12) != p->deviceID)
+      return false;
+   return memcmp(d + 16, p->pipelineCacheUUID, VK_UUID_SIZE) == 0;
+}
+
+static void vulkan_pipeline_cache_create(vk_t *vk)
+{
+   VkPipelineCacheCreateInfo cache;
+   video_shader_cache_view_t view;
+   char key[24];
+   bool mapped                = false;
+   const VkPhysicalDeviceProperties *props =
+      &vk->context->gpu_properties;
+
    cache.sType                = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
    cache.pNext                = NULL;
    cache.flags                = 0;
    cache.initialDataSize      = 0;
    cache.pInitialData         = NULL;
+   vk->pipelines.cache        = VK_NULL_HANDLE;
+   vk->pipelines.cache_disk_size = 0;
 
-   vkCreatePipelineCache(vk->context->device,
-         &cache, NULL, &vk->pipelines.cache);
+   vulkan_pipeline_cache_key(props, key, sizeof(key));
+   /* Mapped where the platform maps files: the driver parses the blob
+    * where it lies, and copies what it keeps itself. */
+   if (video_shader_cache_map(VIDEO_SHADER_CACHE_VULKAN_PIPELINE,
+            key, &view))
+   {
+      mapped = true;
+      if (vulkan_pipeline_cache_header_ok(view.data, view.len, props))
+      {
+         cache.initialDataSize = (size_t)view.len;
+         cache.pInitialData    = view.data;
+      }
+   }
+
+   if (vkCreatePipelineCache(vk->context->device,
+            &cache, NULL, &vk->pipelines.cache) == VK_SUCCESS)
+      vk->pipelines.cache_disk_size = cache.initialDataSize;
+   else if (cache.initialDataSize)
+   {
+      /* Rejected anyway: start empty, the next deinit replaces it */
+      vk->pipelines.cache   = VK_NULL_HANDLE;
+      cache.initialDataSize = 0;
+      cache.pInitialData    = NULL;
+      if (vkCreatePipelineCache(vk->context->device,
+               &cache, NULL, &vk->pipelines.cache) != VK_SUCCESS)
+         vk->pipelines.cache = VK_NULL_HANDLE;
+   }
+   else
+      vk->pipelines.cache = VK_NULL_HANDLE;
+
+   if (mapped)
+      video_shader_cache_unmap(&view);
+}
+
+/* Cold path, on deinit only: nothing is written while content runs.
+ * Pipelines are only ever added to the cache, so data of the size last
+ * read or written is taken to be unchanged and left alone; that keeps a
+ * fullscreen toggle or driver reinit from rewriting the file. */
+static void vulkan_pipeline_cache_save(vk_t *vk)
+{
+   char key[24];
+   void  *data = NULL;
+   size_t size = 0;
+
+   if (vk->pipelines.cache == VK_NULL_HANDLE)
+      return;
+   if (     vkGetPipelineCacheData(vk->context->device,
+               vk->pipelines.cache, &size, NULL) != VK_SUCCESS
+         || !size
+         || size == vk->pipelines.cache_disk_size)
+      return;
+   if (!(data = malloc(size)))
+      return;
+   if (     vkGetPipelineCacheData(vk->context->device,
+               vk->pipelines.cache, &size, data) == VK_SUCCESS
+         && size)
+   {
+      vulkan_pipeline_cache_key(&vk->context->gpu_properties,
+            key, sizeof(key));
+      if (video_shader_cache_write(VIDEO_SHADER_CACHE_VULKAN_PIPELINE,
+               key, data, size))
+         vk->pipelines.cache_disk_size = size;
+   }
+   free(data);
+}
+
+static void vulkan_init_static_resources(vk_t *vk)
+{
+   int i;
+   uint32_t blank[4 * 4];
+   VkCommandPoolCreateInfo pool_info;
+
+   vulkan_pipeline_cache_create(vk);
 
    pool_info.sType            = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
    pool_info.pNext            = NULL;
@@ -7268,8 +7371,10 @@ static void vulkan_init_static_resources(vk_t *vk)
 static void vulkan_deinit_static_resources(vk_t *vk)
 {
    int i;
+   vulkan_pipeline_cache_save(vk);
    vkDestroyPipelineCache(vk->context->device,
          vk->pipelines.cache, NULL);
+   vk->pipelines.cache = VK_NULL_HANDLE;
    vulkan_destroy_texture(
          vk->context->device,
          &vk->display.blank_texture);
@@ -9106,6 +9211,49 @@ static void vulkan_init_render_target(struct vk_image* image,
       VkRenderPass render_pass, vulkan_context_t* ctx);
 static void vulkan_destroy_hdr_buffer(VkDevice device, struct vk_image *img);
 
+/* Two whole-image layout transitions recorded with one barrier call.
+ * The stage masks are the union of what the two transitions would use
+ * apart; callers pair only transitions that sit back to back with no
+ * work between them, where execution dependencies already cover every
+ * earlier command in those stages, so the union waits on nothing the
+ * two separate calls did not. */
+static void vulkan_image_layout_transition_pair(VkCommandBuffer cmd,
+      VkImage img0, VkImageLayout old0, VkImageLayout new0,
+      VkAccessFlags src_access0, VkAccessFlags dst_access0,
+      VkImage img1, VkImageLayout old1, VkImageLayout new1,
+      VkAccessFlags src_access1, VkAccessFlags dst_access1,
+      VkPipelineStageFlags src_stages, VkPipelineStageFlags dst_stages)
+{
+   VkImageMemoryBarrier barriers[2];
+   int i;
+
+   for (i = 0; i < 2; i++)
+   {
+      barriers[i].sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+      barriers[i].pNext                           = NULL;
+      barriers[i].srcQueueFamilyIndex             = VK_QUEUE_FAMILY_IGNORED;
+      barriers[i].dstQueueFamilyIndex             = VK_QUEUE_FAMILY_IGNORED;
+      barriers[i].subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+      barriers[i].subresourceRange.baseMipLevel   = 0;
+      barriers[i].subresourceRange.levelCount     = VK_REMAINING_MIP_LEVELS;
+      barriers[i].subresourceRange.baseArrayLayer = 0;
+      barriers[i].subresourceRange.layerCount     = VK_REMAINING_ARRAY_LAYERS;
+   }
+   barriers[0].image         = img0;
+   barriers[0].oldLayout     = old0;
+   barriers[0].newLayout     = new0;
+   barriers[0].srcAccessMask = src_access0;
+   barriers[0].dstAccessMask = dst_access0;
+   barriers[1].image         = img1;
+   barriers[1].oldLayout     = old1;
+   barriers[1].newLayout     = new1;
+   barriers[1].srcAccessMask = src_access1;
+   barriers[1].dstAccessMask = dst_access1;
+
+   vkCmdPipelineBarrier(cmd, src_stages, dst_stages,
+         0, 0, NULL, 0, NULL, 2, barriers);
+}
+
 static void vulkan_retained_free(vk_t *vk)
 {
    if (vk->retained.image != VK_NULL_HANDLE)
@@ -9137,14 +9285,15 @@ static void vulkan_retain_backbuffer(vk_t *vk, struct vk_image *backbuffer)
       old_layout          = VK_IMAGE_LAYOUT_UNDEFINED;
    }
 
-   VULKAN_IMAGE_LAYOUT_TRANSITION(vk->cmd, backbuffer->image,
+   vulkan_image_layout_transition_pair(vk->cmd,
+         backbuffer->image,
          vulkan_swapchain_layout(vk->context), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
          VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT,
-         VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
-   VULKAN_IMAGE_LAYOUT_TRANSITION(vk->cmd, vk->retained.image,
+         vk->retained.image,
          old_layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
          VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
-         VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+         VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+         VK_PIPELINE_STAGE_TRANSFER_BIT);
 
    region.srcSubresource.mipLevel       = 0;
    region.srcSubresource.baseArrayLayer = 0;
@@ -9168,14 +9317,15 @@ static void vulkan_retain_backbuffer(vk_t *vk, struct vk_image *backbuffer)
          vk->retained.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
          1, &region);
 
-   VULKAN_IMAGE_LAYOUT_TRANSITION(vk->cmd, vk->retained.image,
+   vulkan_image_layout_transition_pair(vk->cmd,
+         vk->retained.image,
          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
          VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
-         VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
-   VULKAN_IMAGE_LAYOUT_TRANSITION(vk->cmd, backbuffer->image,
+         backbuffer->image,
          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, vulkan_swapchain_layout(vk->context),
          VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT,
-         VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+         VK_PIPELINE_STAGE_TRANSFER_BIT,
+         VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
 }
 
 /* One swap of the retained image: copy it into the swapchain image
@@ -11476,17 +11626,18 @@ static void vulkan_xr_copy_ui(vk_t *vk, unsigned s, unsigned ui_dims)
       return;
    }
 
-   VULKAN_IMAGE_LAYOUT_TRANSITION(vk->cmd, vk->views.ui.image,
+   /* dst after the runtime's acquire barrier, as in
+    * vulkan_xr_draw_screen. */
+   vulkan_image_layout_transition_pair(vk->cmd,
+         vk->views.ui.image,
          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
          VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT,
-         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-         VK_PIPELINE_STAGE_TRANSFER_BIT);
-   /* After the runtime's acquire barrier, as in vulkan_xr_draw_screen. */
-   VULKAN_IMAGE_LAYOUT_TRANSITION(vk->cmd, dst,
+         dst,
          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
          0, VK_ACCESS_TRANSFER_WRITE_BIT,
-         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+       | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
          VK_PIPELINE_STAGE_TRANSFER_BIT);
    region.srcSubresource.mipLevel       = 0;
    region.srcSubresource.baseArrayLayer = 0;
@@ -11505,19 +11656,19 @@ static void vulkan_xr_copy_ui(vk_t *vk, unsigned s, unsigned ui_dims)
    vkCmdCopyImage(vk->cmd, vk->views.ui.image,
          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst,
          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-   /* The layout the runtime takes it back in. */
-   VULKAN_IMAGE_LAYOUT_TRANSITION(vk->cmd, dst,
+   /* dst into the layout the runtime takes it back in. */
+   vulkan_image_layout_transition_pair(vk->cmd,
+         dst,
          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
          VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
          VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-         VK_PIPELINE_STAGE_TRANSFER_BIT,
-         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-   VULKAN_IMAGE_LAYOUT_TRANSITION(vk->cmd, vk->views.ui.image,
+         vk->views.ui.image,
          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
          VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_READ_BIT,
          VK_PIPELINE_STAGE_TRANSFER_BIT,
-         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+       | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
 }
 
 /* The tracked eyes into the projection slot, one image each, with no
@@ -12285,7 +12436,7 @@ static bool vulkan_frame(void *data, const void *frame,
 
          {
             struct vk_texture *texture = &chain->texture;
-            vkMapMemory(vk->context->device, texture->memory, texture->offset, texture->size, 0, &texture->mapped);
+            VULKAN_MAP_TEXTURE(vk->context->device, texture, texture->mapped);
          }
 
          if (chain->texture.type == VULKAN_TEXTURE_STAGING)
@@ -13948,7 +14099,7 @@ static bool vulkan_get_current_sw_framebuffer(void *data,
       vk->flags       &= ~VK_FLAG_TEXTURE_FOR_LEND;
       {
          struct vk_texture *texture = &chain->texture;
-         vkMapMemory(vk->context->device, texture->memory, texture->offset, texture->size, 0, &texture->mapped);
+         VULKAN_MAP_TEXTURE(vk->context->device, texture, texture->mapped);
       }
 
       if (chain->texture.type == VULKAN_TEXTURE_STAGING)
@@ -14471,7 +14622,7 @@ static struct vk_stream_state *vulkan_stream_state_get(vk_t *vk,
                || vkCreateFence(device, &fence_info, NULL,
                      &st->fence[i]) != VK_SUCCESS
                || vkMapMemory(device, st->staging[i].memory,
-                     st->staging[i].offset, st->staging[i].size, 0,
+                     st->staging[i].offset, VK_WHOLE_SIZE, 0,
                      &st->staging[i].mapped) != VK_SUCCESS)
             return NULL;
       }
@@ -14627,7 +14778,7 @@ static struct vk_stream_state *vulkan_planar_state_get(vk_t *vk,
             || vkCreateFence(device, &fence_info, NULL,
                   &st->fence[i]) != VK_SUCCESS
             || vkMapMemory(device, st->staging[i].memory,
-                  st->staging[i].offset, st->staging[i].size, 0,
+                  st->staging[i].offset, VK_WHOLE_SIZE, 0,
                   &st->staging[i].mapped) != VK_SUCCESS)
       {
          st->set[VK_STREAM_SLOTS - 1] = VK_NULL_HANDLE;
@@ -16364,7 +16515,7 @@ static bool vulkan_read_viewport_internal(vk_t *vk, uint8_t *buffer,
          if (!bgrx)
             buffer += 3 * (VIDEO_SCALE_H(vk->vp.dims) - 1) * VIDEO_SCALE_W(vk->vp.dims);
          vkMapMemory(vk->context->device, staging->memory,
-               staging->offset, staging->size, 0, (void**)&src);
+               staging->offset, VK_WHOLE_SIZE, 0, (void**)&src);
 
          if (     (staging->flags & VK_TEX_FLAG_NEED_MANUAL_CACHE_MANAGEMENT)
                && (staging->memory != VK_NULL_HANDLE))
@@ -16454,7 +16605,7 @@ static bool vulkan_read_viewport_internal(vk_t *vk, uint8_t *buffer,
 
       if (!staging->mapped)
       {
-         vkMapMemory(vk->context->device, staging->memory, staging->offset, staging->size, 0, &staging->mapped);
+         vkMapMemory(vk->context->device, staging->memory, staging->offset, VK_WHOLE_SIZE, 0, &staging->mapped);
       }
 
       if (     (staging->flags & VK_TEX_FLAG_NEED_MANUAL_CACHE_MANAGEMENT)
@@ -16738,7 +16889,7 @@ static bool vulkan_read_viewport_hdr(void *data, uint16_t *buffer,
 
    if (!staging->mapped)
       vkMapMemory(vk->context->device, staging->memory,
-            staging->offset, staging->size, 0, &staging->mapped);
+            staging->offset, VK_WHOLE_SIZE, 0, &staging->mapped);
 
    if (     (staging->flags & VK_TEX_FLAG_NEED_MANUAL_CACHE_MANAGEMENT)
          && (staging->memory != VK_NULL_HANDLE))

@@ -745,6 +745,9 @@ static void* gx2_font_init(void* data, const char* font_path,
    font->atlas                       = font->font_driver->get_atlas(font->font_data);
    /* The atlas may grow, kept modest for the 32 MB of MEM1 */
    font->atlas->max_dims = VIDEO_SCALE_PACK(1024, 1024);
+   /* Cells are copied into the texture the GPU samples, and the frame
+    * swapped last may still be drawing from it */
+   font->atlas->inflight = 1;
    if (!gx2_font_make_texture(font))
    {
       font->font_driver->free(font->font_data);
@@ -789,6 +792,54 @@ static int gx2_font_get_message_width(void *data, const char *msg,
       return 0;
    return font_renderer_get_message_width(font->font_driver,
          font->font_data, msg, msg_len, scale);
+}
+
+/* The @count glyph sprites written from the vertex cache's current one
+ * out of the CPU's cache, for the GPU to read */
+static void gx2_font_invalidate_sprites(wiiu_video_t *wiiu, int count)
+{
+   GX2Invalidate(GX2_INVALIDATE_MODE_CPU_ATTRIBUTE_BUFFER,
+         wiiu->vertex_cache.v + wiiu->vertex_cache.current,
+         count * sizeof(*wiiu->vertex_cache.v));
+}
+
+/* Copies each of the atlas's dirty rectangles into the image and out of
+ * the CPU's cache, as much of each as the image holds: an atlas the
+ * image could not follow is larger than it */
+static void gx2_font_upload_dirty(gx2_font_t *font)
+{
+   unsigned i, n = font_atlas_dirty_rects(font->atlas);
+   unsigned w    = font->texture.surface.width;
+   unsigned h    = font->texture.surface.height;
+   if (w > font->atlas->width)
+      w = font->atlas->width;
+   if (h > font->atlas->height)
+      h = font->atlas->height;
+   for (i = 0; i < n; i++)
+   {
+      unsigned j, xy0, xy1, x0, y0, x1, y1;
+      font_atlas_dirty_rect(font->atlas, i, &xy0, &xy1);
+      x0 = VIDEO_SCALE_W(xy0);
+      y0 = VIDEO_SCALE_H(xy0);
+      x1 = VIDEO_SCALE_W(xy1);
+      y1 = VIDEO_SCALE_H(xy1);
+      if (x1 > w)
+         x1 = w;
+      if (y1 > h)
+         y1 = h;
+      if (x1 <= x0 || y1 <= y0)
+         continue;
+      for (j = y0; j < y1; j++)
+         memcpy((uint8_t*)font->texture.surface.image
+               + (j * font->texture.surface.pitch) + x0,
+               font->atlas->buffer + (j * font->atlas->width) + x0,
+               x1 - x0);
+      GX2Invalidate(GX2_INVALIDATE_MODE_CPU_TEXTURE,
+            (uint8_t*)font->texture.surface.image
+                  + (y0 * font->texture.surface.pitch) + x0,
+            (y1 - y0 - 1) * font->texture.surface.pitch + (x1 - x0));
+   }
+   font->atlas->dirty = false;
 }
 
 static void gx2_font_render_message(
@@ -863,32 +914,9 @@ static void gx2_font_render_message(
       count = v - wiiu->vertex_cache.v - wiiu->vertex_cache.current; \
       if (!count) \
          break; \
-      GX2Invalidate(GX2_INVALIDATE_MODE_CPU_ATTRIBUTE_BUFFER, \
-            wiiu->vertex_cache.v + wiiu->vertex_cache.current, \
-            count * sizeof(wiiu->vertex_cache.v)); \
+      gx2_font_invalidate_sprites(wiiu, count); \
       if (font->atlas->dirty) \
-      { \
-         /* Copy and invalidate only the dirty row band tracked by \
-          * the font renderers instead of the whole atlas */ \
-         unsigned j; \
-         unsigned y0 = VIDEO_SCALE_H(font->atlas->dirty_xy0); \
-         unsigned y1 = VIDEO_SCALE_H(font->atlas->dirty_xy1); \
-         if (y1 > font->atlas->height) \
-            y1 = font->atlas->height; \
-         if (y1 > font->texture.surface.height) \
-            y1 = font->texture.surface.height; \
-         for (j = y0; j < y1; j++) \
-            memcpy(font->texture.surface.image \
-                  + (j * font->texture.surface.pitch), \
-                   font->atlas->buffer + (j * font->atlas->width), \
-                   font->atlas->width); \
-         if (y1 > y0) \
-            GX2Invalidate(GX2_INVALIDATE_MODE_CPU_TEXTURE, \
-                  font->texture.surface.image \
-                        + (y0 * font->texture.surface.pitch), \
-                  (y1 - y0) * font->texture.surface.pitch); \
-         font->atlas->dirty = false; \
-      } \
+         gx2_font_upload_dirty(font); \
       GX2SetPixelTexture(&font->texture, \
             sprite_shader.ps.samplerVars[0].location); \
       GX2SetVertexUniformBlock(sprite_shader.vs.uniformBlocks[1].offset, \

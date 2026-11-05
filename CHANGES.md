@@ -1,4 +1,6 @@
 # Future
+- D3D11: Software-rendering cores draw straight into lent staging textures, copied to the frame texture on the GPU instead of by the CPU
+- VULKAN: Keep the pipeline cache on disk between runs, one file per GPU, so stock and slang shader pipelines are not recompiled by the driver on every launch, preset load or driver reinit
 - LINUX: Game Mode implemented natively (I/O priority plus a power-profiles-daemon performance hold); Feral libgamemode is no longer loaded and deps/feralgamemode is removed
 - NETPLAY/REPLAY: Record all players' resolved inputs in BSV replays, committing each frame and its checkpoints only after rollback confirmation
 - 3DS: Remove bottom screen fade out animation
@@ -145,6 +147,7 @@
 - SCAN: Interpret M3U files during scanning
 - SCAN: Merge manual and automatic scan into a more flexible setup
 - SCAN: Improve GDI content recognition
+- SCAN: --scan runs every path and exits with what the scans did; Manual Scan options, --scan-refresh and --scan-refresh-all on the command line; Refresh All Playlists in Manage Playlists
 - SHADER: Display on-screen error when preset load fails
 - SHADER: Add gyroscope / accelerometer uniforms for shaders
 - SHADER: Add aggressive shader caching to slang shader backend

@@ -2745,6 +2745,16 @@ void video_driver_cache_context_ack_set(void);
  * that holds none. */
 void video_driver_hw_render_interface_note(const struct retro_hw_render_interface *iface);
 bool video_driver_hw_render_interface_kept(void);
+/* Which of a GL driver's contexts a hardware core renders in: its own,
+ * shared with the driver's (@shared), or the driver's. Called by the
+ * driver once its context is up. When the context was kept across a
+ * restart but the core now renders in the other one, the objects it
+ * kept are not there: the kept-context acknowledgement is withdrawn, so
+ * the core is reset after all. */
+void video_driver_hw_context_shared_note(bool shared);
+/* The decision itself: the context the core rendered in before
+ * (-1 for none known, 0 the driver's, 1 its own) and the one now. */
+bool video_driver_hw_context_moved(int before, bool shared);
 bool video_driver_cache_context_ack_test(void);
 void video_driver_cache_context_ack_clear(void);
 
@@ -2948,6 +2958,9 @@ float video_driver_hdr_metadata_peak(float driver_value);
  */
 int video_driver_gpu_index_resolve(enum gfx_ctx_api api, int index,
       struct string_list *list);
+
+/* Remember an explicit choice from this API's current device list. */
+void video_driver_gpu_index_select(enum gfx_ctx_api api, int index);
 
 struct string_list* video_driver_get_gpu_api_devices(enum gfx_ctx_api api);
 

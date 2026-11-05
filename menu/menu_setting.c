@@ -135,6 +135,9 @@ void android_app_set_window_settings(bool notch_write_over,
 #ifdef HAVE_TEMPORAL_UPSCALER
 #include "../gfx/video_upscaler.h"
 #endif
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+#include "../gfx/common/vulkan_custom_driver.h"
+#endif
 #include "../gfx/video_views.h"
 #include "../gfx/video_windows.h"
 #ifdef HAVE_MODELINE
@@ -3670,6 +3673,23 @@ static size_t setting_get_string_representation_video_font_path(
    return fill_pathname(s, path_basename(setting->value.target.string),
          "", len);
 }
+
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+static size_t setting_get_string_representation_vulkan_driver(
+      rarch_setting_t *setting, char *s, size_t len)
+{
+   if (!setting)
+      return 0;
+   if (vulkan_custom_driver_safe_mode())
+      return strlcpy(s, msg_hash_to_str(
+               MENU_ENUM_LABEL_VALUE_VIDEO_VULKAN_DRIVER_PATH_SAFE_MODE), len);
+   if (!setting->value.target.string || !*setting->value.target.string)
+      return strlcpy(s, msg_hash_to_str(
+               MENU_ENUM_LABEL_VALUE_VIDEO_VULKAN_DRIVER_PATH_SYSTEM), len);
+   return fill_pathname(s, path_basename(setting->value.target.string),
+         "", len);
+}
+#endif
 
 static size_t setting_get_string_representation_video_hdr_expand_gamut(
       rarch_setting_t *setting, char *s, size_t len)
@@ -8767,6 +8787,7 @@ static size_t setting_get_string_representation_input_rotation(
    return strlcpy(s, msg_hash_to_str(e), len);
 }
 
+#ifdef HAVE_OVERLAY
 static size_t setting_get_string_representation_overlay_contact_method(
       rarch_setting_t *setting, char *s, size_t len)
 {
@@ -8784,6 +8805,7 @@ static size_t setting_get_string_representation_overlay_contact_method(
    }
    return strlcpy(s, msg_hash_to_str(e), len);
 }
+#endif
 
 static size_t setting_get_string_representation_socd(
       rarch_setting_t *setting, char *s, size_t len)
@@ -10716,6 +10738,10 @@ static void general_write_handler(rarch_setting_t *setting)
 
    switch (setting->enum_idx)
    {
+      case MENU_ENUM_LABEL_VIDEO_GPU_INDEX:
+         video_driver_gpu_index_select(video_context_driver_get_api(),
+               *setting->value.target.integer);
+         break;
       case MENU_ENUM_LABEL_VIDEO_SHADERS_ENABLE:
 #if defined(HAVE_CG) || defined(HAVE_GLSL) || defined(HAVE_SLANG) || defined(HAVE_HLSL)
          video_shader_toggle(settings, true);
@@ -10738,6 +10764,37 @@ static void general_write_handler(rarch_setting_t *setting)
          /* Push the new policy to the active SSL backend so it takes
           * effect on the next HTTPS connection without a restart. */
          ssl_socket_set_verify_mode(*setting->value.target.unsigned_integer);
+         break;
+#endif
+#ifdef HAVE_SMBCLIENT
+      case MENU_ENUM_LABEL_SMB_CLIENT_SERVER:
+      case MENU_ENUM_LABEL_SMB_CLIENT_SHARE:
+      case MENU_ENUM_LABEL_SMB_CLIENT_SUBDIR:
+      case MENU_ENUM_LABEL_SMB_CLIENT_USERNAME:
+      case MENU_ENUM_LABEL_SMB_CLIENT_PASSWORD:
+      case MENU_ENUM_LABEL_SMB_CLIENT_WORKGROUP:
+      case MENU_ENUM_LABEL_SMB_CLIENT_REALM:
+      case MENU_ENUM_LABEL_SMB_CLIENT_KDC:
+      case MENU_ENUM_LABEL_SMB_CLIENT_AUTH_MODE:
+      case MENU_ENUM_LABEL_SMB_CLIENT_NUM_CONTEXTS:
+      case MENU_ENUM_LABEL_SMB_CLIENT_TIMEOUT:
+      case MENU_ENUM_LABEL_SMB_CLIENT_READAHEAD:
+         /* the client keeps copies of the numbers */
+         retroarch_smb_init();
+         break;
+#endif
+#ifdef HAVE_NFSCLIENT
+      case MENU_ENUM_LABEL_NFS_CLIENT_SERVER:
+      case MENU_ENUM_LABEL_NFS_CLIENT_EXPORT:
+      case MENU_ENUM_LABEL_NFS_CLIENT_TIMEOUT:
+      case MENU_ENUM_LABEL_NFS_CLIENT_NUM_CONTEXTS:
+      case MENU_ENUM_LABEL_NFS_CLIENT_PORT:
+      case MENU_ENUM_LABEL_NFS_CLIENT_MOUNT_PORT:
+      case MENU_ENUM_LABEL_NFS_CLIENT_VERSION:
+      case MENU_ENUM_LABEL_NFS_CLIENT_READAHEAD:
+         /* the client keeps copies of the numbers, and connections
+          * made with the old settings */
+         retroarch_nfs_init();
          break;
 #endif
 #ifndef HAVE_LAKKA
@@ -13589,6 +13646,13 @@ static const setting_desc_t vid_desc_2[] = {
 static const setting_desc_t vid_desc_3[] = {
 /* GENERATED: rows come from settings_def_vulkan_gpu_index.h in order. */
 #include "../settings/settings_def_vulkan_gpu_index.h"
+};
+#endif
+
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+static const setting_desc_t vulkan_driver_desc[] = {
+/* GENERATED: rows come from settings_def_vulkan_driver_path.h in order. */
+#include "../settings/settings_def_vulkan_driver_path.h"
 };
 #endif
 
@@ -16577,6 +16641,11 @@ static void settings_build_video(
 
             ADD_DESC(vid_desc_3);
          }
+#endif
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+         /* Any video driver: HW cores force Vulkan under gl too */
+         if (vulkan_custom_driver_supported())
+            ADD_DESC(vulkan_driver_desc);
 #endif
 
 #ifdef HAVE_D3D10
@@ -19800,7 +19869,7 @@ static void settings_build_smbclient(
          &group_info,
          &subgroup_info,
          parent_group,
-         NULL,
+         general_write_handler,
          NULL);
       SETTINGS_DATA_LIST_CURRENT_ADD_FLAGS(list, list_info, SD_FLAG_ALLOW_INPUT);
 
@@ -19814,7 +19883,7 @@ static void settings_build_smbclient(
          &group_info,
          &subgroup_info,
          parent_group,
-         NULL,
+         general_write_handler,
          NULL);
       SETTINGS_DATA_LIST_CURRENT_ADD_FLAGS(list, list_info, SD_FLAG_ALLOW_INPUT);
 
@@ -19828,7 +19897,7 @@ static void settings_build_smbclient(
          &group_info,
          &subgroup_info,
          parent_group,
-         NULL,
+         general_write_handler,
          NULL);
       SETTINGS_DATA_LIST_CURRENT_ADD_FLAGS(list, list_info, SD_FLAG_ALLOW_INPUT);
 
@@ -19842,7 +19911,7 @@ static void settings_build_smbclient(
          &group_info,
          &subgroup_info,
          parent_group,
-         NULL,
+         general_write_handler,
          NULL);
       SETTINGS_DATA_LIST_CURRENT_ADD_FLAGS(list, list_info, SD_FLAG_ALLOW_INPUT);
 
@@ -19856,7 +19925,7 @@ static void settings_build_smbclient(
          &group_info,
          &subgroup_info,
          parent_group,
-         NULL,
+         general_write_handler,
          NULL);
       SETTINGS_DATA_LIST_CURRENT_ADD_FLAGS(list, list_info, SD_FLAG_ALLOW_INPUT);
       SETTINGS_ACTION_SET(repr, &(*list)[list_info->index - 1], setting_get_string_representation_smb_password)
@@ -19871,7 +19940,7 @@ static void settings_build_smbclient(
          &group_info,
          &subgroup_info,
          parent_group,
-         NULL,
+         general_write_handler,
          NULL);
       SETTINGS_DATA_LIST_CURRENT_ADD_FLAGS(list, list_info, SD_FLAG_ALLOW_INPUT);
 
@@ -19887,7 +19956,7 @@ static void settings_build_smbclient(
    CONFIG_STRING(list, list_info, settings->arrays.field,                \
          sizeof(settings->arrays.field), MENU_ENUM_LABEL_##T,            \
          MENU_ENUM_LABEL_VALUE_##T, "", &group_info, &subgroup_info,     \
-         parent_group, NULL, NULL);                                      \
+         parent_group, general_write_handler, NULL);                     \
    SETTINGS_DATA_LIST_CURRENT_ADD_FLAGS(list, list_info, SD_FLAG_ALLOW_INPUT)
 #define NFS_UINT(field, T, def, mn, mx)                                  \
    CONFIG_UINT(list, list_info, &settings->uints.field,                  \
@@ -20363,6 +20432,9 @@ static const settings_desc_table_t settings_desc_registry[] = {
 #endif
 #ifdef HAVE_VULKAN
    { vid_desc_3, (uint16_t)ARRAY_SIZE(vid_desc_3) },
+#endif
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+   { vulkan_driver_desc, (uint16_t)ARRAY_SIZE(vulkan_driver_desc) },
 #endif
 #ifdef HAVE_D3D10
    { vid_desc_4, (uint16_t)ARRAY_SIZE(vid_desc_4) },

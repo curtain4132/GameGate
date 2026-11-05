@@ -105,6 +105,10 @@
 #include <formats/rjson.h>
 #endif
 
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+#include "../../gfx/common/vulkan_custom_driver.h"
+#endif
+
 #ifdef ANDROID
 static void frontend_unix_set_sustained_performance_mode(bool on);
 
@@ -122,7 +126,10 @@ enum platform_android_flags
 {
    PLAT_ANDROID_FLAG_GAME_CONSOLE_DEVICE = (1 << 0),
    PLAT_ANDROID_FLAG_ANDROID_TV_DEVICE   = (1 << 1),
-   PLAT_ANDROID_FLAG_XPERIA_PLAY_DEVICE  = (1 << 2)
+   PLAT_ANDROID_FLAG_XPERIA_PLAY_DEVICE  = (1 << 2),
+   /* A device quirk above picked the audio latency; the first-run
+    * defaults leave it alone. */
+   PLAT_ANDROID_FLAG_LATENCY_QUIRK       = (1 << 3)
 };
 
 static char app_dir[DIR_MAX_LENGTH];
@@ -169,64 +176,6 @@ static retro_atomic_int_t unix_sighandler_quit = RETRO_ATOMIC_INT_INITIALIZER(0)
 #ifndef ANDROID
 static enum frontend_fork unix_fork_mode = FRONTEND_FORK_NONE;
 #endif
-
-int system_property_get(const char *command,
-      const char *args, char *value, size_t value_size)
-{
-   FILE *pipe;
-   char buffer[BUFSIZ];
-   char cmd[NAME_MAX_LENGTH];
-   char *pos                  = NULL;
-   size_t __len               = 0;
-   size_t _len                = strlcpy(cmd, command, sizeof(cmd));
-
-   if (value_size == 0)
-      return 0;
-
-   cmd[  _len]                = ' ';
-   cmd[++_len]                = '\0';
-
-   strlcpy(cmd + _len, args, sizeof(cmd) - _len);
-
-   if (!(pipe = popen(cmd, "r")))
-   {
-      RARCH_ERR("Could not create pipe.\n");
-      return 0;
-   }
-
-   pos = value;
-
-   while (!feof(pipe))
-   {
-      if (fgets(buffer, sizeof(buffer), pipe))
-      {
-         size_t _len = strlen(buffer);
-         
-         /* Prevent buffer overflow by checking available space */
-         if (__len + _len >= value_size - 1)
-         {
-            /* Copy only what fits, leaving space for null terminator */
-            size_t remaining = value_size - __len - 1;
-            if (remaining > 0)
-            {
-               memcpy(pos, buffer, remaining);
-               pos += remaining;
-               __len += remaining;
-            }
-            break;
-         }
-
-         memcpy(pos, buffer, _len);
-
-         pos   += _len;
-         __len += _len;
-      }
-   }
-
-   *pos = '\0';
-   pclose(pipe);
-   return __len;
-}
 
 bool test_permissions(const char *path)
 {
@@ -1138,7 +1087,13 @@ void frontend_android_get_manufacturer_model(char *s, size_t len)
 
 void frontend_android_get_name(char *s, size_t len)
 {
-   system_property_get("getprop", "ro.product.model", s, len);
+   char model[PROP_VALUE_MAX] = {0};
+
+   if (!s || len == 0)
+      return;
+
+   __system_property_get("ro.product.model", model);
+   strlcpy(s, model, len);
 }
 
 void frontend_android_get_version(int32_t *major,
@@ -1173,8 +1128,11 @@ void frontend_android_get_version(int32_t *major,
 
 void frontend_android_get_version_sdk(int32_t *sdk)
 {
+   /* Read the property in-process, not by running getprop through
+    * popen(), a fork and exec of a shell for one number: this is asked
+    * on the startup path. */
    char os_version_str[PROP_VALUE_MAX] = {0};
-   system_property_get("getprop", "ro.build.version.sdk", os_version_str, sizeof(os_version_str));
+   __system_property_get("ro.build.version.sdk", os_version_str);
    *sdk = 0;
    if (os_version_str[0])
       *sdk = (int32_t)strtol(os_version_str, NULL, 10);
@@ -3038,6 +2996,26 @@ static void frontend_unix_get_env(int *argc,
          args->config_path = android_config_path;
    }
 
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+   /* Safe mode, from the "Safe start" launcher shortcut. */
+   CALL_OBJ_METHOD_PARAM(env, jstr, obj, android_app->getStringExtra,
+         (*env)->NewStringUTF(env, "VULKAN_DRIVER"));
+
+   {
+      bool safe_mode = false;
+      if (android_app->getStringExtra && jstr)
+      {
+         const char *argv = (*env)->GetStringUTFChars(env, jstr, 0);
+
+         safe_mode = string_is_equal(argv, "system");
+         __android_log_print(ANDROID_LOG_INFO,
+            "RetroArch", "[ENV] Vulkan driver: \"%s\".\n", argv);
+         (*env)->ReleaseStringUTFChars(env, jstr, argv);
+      }
+      vulkan_custom_driver_set_safe_mode(safe_mode);
+   }
+#endif
+
    /* Current IME. */
    CALL_OBJ_METHOD_PARAM(env, jstr, obj, android_app->getStringExtra,
          (*env)->NewStringUTF(env, "IME"));
@@ -3451,13 +3429,19 @@ static void frontend_unix_get_env(int *argc,
       }
    }
 
-   system_property_get("getprop", "ro.product.model", device_model, sizeof(device_model));
+   __system_property_get("ro.product.model", device_model);
 
    /* Set automatic default values per device */
    if (g_platform_android_flags & PLAT_ANDROID_FLAG_XPERIA_PLAY_DEVICE)
+   {
       g_defaults.settings_out_latency = 128;
+      g_platform_android_flags       |= PLAT_ANDROID_FLAG_LATENCY_QUIRK;
+   }
    else if (strstr(device_model, "GAMEMID_BT"))
+   {
       g_defaults.settings_out_latency = 160;
+      g_platform_android_flags       |= PLAT_ANDROID_FLAG_LATENCY_QUIRK;
+   }
    else if (strstr(device_model, "SHIELD"))
    {
       g_defaults.settings_video_refresh_rate = 60.0;
@@ -3976,6 +3960,10 @@ static void frontend_unix_init(void *data)
          "hideKeyboard", "()V");
    GET_METHOD_ID(env, android_app->setSecondDisplay, class,
          "setSecondDisplay", "(II)V");
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+   GET_METHOD_ID(env, android_app->addSafeStartShortcut, class,
+         "addSafeStartShortcut", "()V");
+#endif
 
    CALL_BOOLEAN_METHOD(env, android_app->is_play_store_build,
          android_app->activity->clazz, android_app->isPlayStoreBuild);
@@ -4008,7 +3996,7 @@ static void frontend_unix_init(void *data)
          g_platform_android_flags |= PLAT_ANDROID_FLAG_ANDROID_TV_DEVICE;
    }
 
-   system_property_get("getprop", "ro.product.model", device_model, sizeof(device_model));
+   __system_property_get("ro.product.model", device_model);
 
    /* Check if we are a game console device */
    if (device_is_game_console(device_model))
@@ -4485,6 +4473,117 @@ static void frontend_unix_destroy_signal_handler_state(void)
 {
    retro_atomic_store_release_int(&unix_sighandler_quit, 0);
 }
+
+#ifdef ANDROID
+#ifdef HAVE_VULKAN
+/* Whether the device declares Vulkan 1.1 or later, from
+ * PackageManager.hasSystemFeature("android.hardware.vulkan.version",
+ * 0x00401000).  The feature is what the device's Vulkan driver passed
+ * conformance at, so it is read from the system rather than by loading
+ * the driver and creating an instance.  The (String, int) overload is
+ * API 24; nothing older declares a Vulkan version at all. */
+static bool android_has_vulkan_1_1(JNIEnv *env, jobject activity)
+{
+   jclass activity_class;
+   jclass pm_class;
+   jmethodID get_package_manager;
+   jmethodID has_feature;
+   jobject pm;
+   jstring name;
+   jboolean ret = JNI_FALSE;
+
+   activity_class      = (*env)->GetObjectClass(env, activity);
+   get_package_manager = (*env)->GetMethodID(env, activity_class,
+         "getPackageManager", "()Landroid/content/pm/PackageManager;");
+   (*env)->DeleteLocalRef(env, activity_class);
+   if (android_env_exception(env, "getPackageManager lookup"))
+      return false;
+
+   pm = (*env)->CallObjectMethod(env, activity, get_package_manager);
+   if (android_env_exception(env, "getPackageManager") || !pm)
+      return false;
+
+   pm_class    = (*env)->GetObjectClass(env, pm);
+   has_feature = (*env)->GetMethodID(env, pm_class,
+         "hasSystemFeature", "(Ljava/lang/String;I)Z");
+   (*env)->DeleteLocalRef(env, pm_class);
+   if (!android_env_exception(env, "hasSystemFeature lookup"))
+   {
+      if ((name = (*env)->NewStringUTF(env,
+                  "android.hardware.vulkan.version")))
+      {
+         ret = (*env)->CallBooleanMethod(env, pm, has_feature, name,
+               (jint)0x00401000);
+         if (android_env_exception(env, "hasSystemFeature"))
+            ret = JNI_FALSE;
+         (*env)->DeleteLocalRef(env, name);
+      }
+   }
+   (*env)->DeleteLocalRef(env, pm);
+   return ret != JNI_FALSE;
+}
+#endif
+
+/* The drivers and audio latency this device is best served by, set as
+ * the settings' own values.  Applied on a fresh install's first start,
+ * when no config file exists yet, and on "Reset to Default
+ * Configuration"; never to a config that is only being loaded.
+ *
+ * The built-in defaults stay what they always were (OpenGL ES, OpenSL
+ * ES, 128 ms): a config saved with "save minimal" leaves out every key
+ * that matches them, so changing them would move those installs to new
+ * drivers on update.  Set as values, these are saved with the rest of
+ * the config whatever the save mode.
+ *
+ * - Vulkan when the device declares Vulkan 1.1.  Devices with only a
+ *   1.0 driver, or none, keep OpenGL ES, as before.
+ * - AAudio from Android 8.1 (API 27).  8.0 has AAudio but with the
+ *   bugs that make Oboe use OpenSL ES there; older releases keep
+ *   OpenSL ES, as before.  With AAudio the latency drops to 64 ms,
+ *   unless a device quirk above chose one. */
+void android_apply_device_defaults(settings_t *settings)
+{
+   int32_t sdk = 0;
+
+   if (!settings)
+      return;
+
+   frontend_android_get_version_sdk(&sdk);
+
+#ifdef HAVE_VULKAN
+   if (     sdk >= 24
+         && g_android && g_android->activity
+         && driver_find_index("video_driver", "vulkan") >= 0)
+   {
+      JNIEnv *env = jni_thread_getenv();
+
+      if (env && android_has_vulkan_1_1(env, g_android->activity->clazz))
+      {
+         configuration_set_string(settings,
+               settings->arrays.video_driver, "vulkan");
+         RARCH_LOG("[Config] Device defaults: Vulkan 1.1, "
+               "video driver \"vulkan\".\n");
+      }
+   }
+#endif
+
+#ifdef HAVE_AAUDIO
+   if (     sdk >= 27
+         && driver_find_index("audio_driver", "aaudio") >= 0)
+   {
+      configuration_set_string(settings,
+            settings->arrays.audio_driver, "aaudio");
+      if (!(g_platform_android_flags & PLAT_ANDROID_FLAG_LATENCY_QUIRK))
+         configuration_set_uint(settings,
+               settings->uints.audio_latency, 64);
+      RARCH_LOG("[Config] Device defaults: Android API %d, audio driver "
+            "\"aaudio\", latency %u ms.\n",
+            (int)sdk, settings->uints.audio_latency);
+   }
+#endif
+   (void)sdk;
+}
+#endif /* ANDROID */
 
 /* To free change_data, call the function again with a NULL 
  * string_list while providing change_data again */

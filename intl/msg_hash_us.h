@@ -7839,7 +7839,7 @@ MSG_HASH(
    )
 MSG_HASH(
    MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_QUALITY_NATIVE,
-   "Native (anti-aliasing only)"
+   "Native (DLAA, anti-aliasing only)"
    )
 MSG_HASH(
    MENU_ENUM_LABEL_VALUE_VIDEO_TEMPORAL_UPSCALER_QUALITY_QUALITY,
@@ -7957,6 +7957,22 @@ MSG_HASH(
    MENU_ENUM_LABEL_VALUE_VIDEO_DLSS_NR_SKIN_STRUCTURE_FOLLOW,
    "Follow Local Structure"
    )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_VIDEO_VULKAN_DRIVER_PATH_SYSTEM,
+   "System"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_VIDEO_VULKAN_DRIVER_PATH_CRASHED,
+   "Crashed last run, using System"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_VIDEO_VULKAN_DRIVER_PATH_SAFE_MODE,
+   "System (Safe start)"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_VIDEO_VULKAN_DRIVER_PATH_SAFE_MODE,
+   "%s is used again at the next normal start"
+   )
 /* GENERATED REGION: HDR toggle group, stereo 3D & screens group and headset group (see settings_def_video_hdr_toggles.h, settings_def_video_stereo.h and settings_def_video_headset.h). */
 #define SETTINGS_DEF_STRINGS_PASS
 #define S_BOOL(f, T, n, d, sd, df, c, us, sub) \
@@ -8036,6 +8052,7 @@ MSG_HASH(MENU_ENUM_SUBLABEL_##T, sub)
 MSG_HASH(MENU_ENUM_LABEL_VALUE_##T, us)
 #include "../settings/settings_def_video_hdr_toggles.h"
 #include "../settings/settings_def_video_upscaler.h"
+#include "../settings/settings_def_vulkan_driver_path.h"
 #include "../settings/settings_def_video_stereo.h"
 #include "../settings/settings_def_video_headset.h"
 #include "../settings/settings_def_video_screens.h"
@@ -23513,6 +23530,14 @@ MSG_HASH(
    "Add new content and remove invalid entries by repeating the content scan operation last used to create or edit the playlist."
    )
 MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_PLAYLIST_MANAGER_REFRESH_ALL_PLAYLISTS,
+   "Refresh All Playlists"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_PLAYLIST_MANAGER_REFRESH_ALL_PLAYLISTS,
+   "Rescan every playlist that has saved scan settings, with those settings."
+   )
+MSG_HASH(
    MENU_ENUM_LABEL_VALUE_DELETE_PLAYLIST,
    "Delete Playlist"
    )
@@ -32845,6 +32870,10 @@ MSG_HASH(
    "Refresh failed - arcade DAT file too large (insufficient memory): "
    )
 MSG_HASH(
+   MSG_PLAYLIST_MANAGER_REFRESH_ALL_DONE,
+   "Playlists refreshed: %u, skipped: %u, failed: %u"
+   )
+MSG_HASH(
    MSG_ADDED_TO_FAVORITES,
    "Added to favorites"
    )
@@ -34525,6 +34554,30 @@ MSG_HASH(
    "On + Boost"
    )
 MSG_HASH(
+   MSG_VULKAN_CUSTOM_DRIVER_FAILED,
+   "Custom Vulkan driver failed to start. Using the system driver."
+   )
+MSG_HASH(
+   MSG_VULKAN_CUSTOM_DRIVER_CRASHED,
+   "Custom Vulkan driver crashed before and is off for this core. Pick it again to retry."
+   )
+MSG_HASH(
+   MSG_VULKAN_CUSTOM_DRIVER_INVALID,
+   "Custom Vulkan driver package is not usable. Using the system driver."
+   )
+MSG_HASH(
+   MSG_VULKAN_CUSTOM_DRIVER_UNSUPPORTED,
+   "Custom Vulkan drivers need an Adreno GPU and Android 9. Using the system driver."
+   )
+MSG_HASH(
+   MSG_VULKAN_CUSTOM_DRIVER_RESTART,
+   "Restart RetroArch to change the Vulkan driver."
+   )
+MSG_HASH(
+   MSG_VULKAN_CUSTOM_DRIVER_SAFE_MODE,
+   "Started with the system Vulkan driver."
+   )
+MSG_HASH(
    MSG_RESAMPLER_QUALITY_LOWEST,
    "Lowest"
    )
@@ -34641,6 +34694,10 @@ MSG_HASH(
    "Scan complete: "
    )
 MSG_HASH(
+   MSG_MANUAL_CONTENT_SCAN_ALREADY_RUNNING,
+   "A content scan is already running."
+   )
+MSG_HASH(
    MSG_CORE_BACKUP_SCANNING_CORE,
    "Scanning core: "
    )
@@ -34703,6 +34760,10 @@ MSG_HASH(
 MSG_HASH(
    MSG_CORE_RESTORATION_DISABLED,
    "Core restoration disabled - core is locked: "
+   )
+MSG_HASH(
+   MSG_CORE_BACKUP_IN_PROGRESS,
+   "A backup or restore of this core is already running: "
    )
 MSG_HASH(
    MSG_CORE_INSTALLATION_DISABLED,
@@ -38255,7 +38316,7 @@ MSG_HASH(
    )
 MSG_HASH(
    MENU_ENUM_SUBLABEL_NFS_CLIENT_PORT,
-   "Port of the NFS service. 0 asks the server's portmapper."
+   "Port of the NFS service. 0 asks the server's portmapper on version 3 and means 2049 on version 4."
    )
 MSG_HASH(
    MENU_ENUM_LABEL_VALUE_NFS_CLIENT_MOUNT_PORT,
@@ -38263,7 +38324,7 @@ MSG_HASH(
    )
 MSG_HASH(
    MENU_ENUM_SUBLABEL_NFS_CLIENT_MOUNT_PORT,
-   "Port of the MOUNT service. 0 asks the server's portmapper."
+   "Port of the MOUNT service. 0 asks the server's portmapper. Version 4 does not use it."
    )
 MSG_HASH(
    MENU_ENUM_LABEL_VALUE_NFS_CLIENT_VERSION,

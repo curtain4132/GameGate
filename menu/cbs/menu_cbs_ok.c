@@ -93,6 +93,9 @@
 #include "../../bluetooth/bluetooth_driver.h"
 #endif
 #include "../../gfx/video_display_server.h"
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+#include "../../gfx/common/vulkan_custom_driver.h"
+#endif
 #include "../../manual_content_scan.h"
 #ifdef __MACH__
 #include <TargetConditionals.h>
@@ -150,6 +153,7 @@ enum
    ACTION_OK_SHOW_WIMP,
    ACTION_OK_LOAD_CHEAT_FILE_APPEND,
    ACTION_OK_LOAD_RGUI_MENU_THEME_PRESET,
+   ACTION_OK_LOAD_VULKAN_DRIVER,
    ACTION_OK_SET_MANUAL_CONTENT_SCAN_DAT_FILE
 };
 
@@ -1354,13 +1358,24 @@ int generic_action_ok_displaylist_push(
          info.type          = FILE_TYPE_DIRECTORY;
          dl_type            = DISPLAYLIST_FILE_BROWSER_SELECT_DIR;
          info.directory_ptr = idx;
-         info_label         = label;
+         info_label         = MENU_ENUM_LABEL_MANUAL_CONTENT_SCAN_DIR_STR;
+         info_path          = new_path;
 
-         action_ok_get_file_browser_start_path(
-               manual_content_scan_get_content_dir_ptr(),
-               new_path, parent_dir, sizeof(parent_dir), true);
-
-         info_path          = parent_dir;
+         /* The stored location's own entry reopens it; the other
+          * places open at their root */
+         if (type == MENU_SETTING_MANUAL_CONTENT_SCAN_DIR)
+         {
+            const char *stored = manual_content_scan_get_content_dir_ptr();
+            info_path          = parent_dir;
+#if defined(HAVE_NFSCLIENT) || defined(HAVE_SMBCLIENT)
+            /* Nothing above a network root can be browsed */
+            if (menu_displaylist_is_network_root(stored))
+               info_path       = stored;
+            else
+#endif
+               action_ok_get_file_browser_start_path(stored,
+                     new_path, parent_dir, sizeof(parent_dir), true);
+         }
          break;
       case ACTION_OK_DL_MANUAL_CONTENT_SCAN_DAT_FILE:
          filebrowser_clear_type();
@@ -1530,6 +1545,33 @@ int generic_action_ok_displaylist_push(
             info_path          = parent_dir;
          }
          break;
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+      case ACTION_OK_DL_VULKAN_DRIVER:
+         {
+            char drivers_dir[DIR_MAX_LENGTH];
+
+            filebrowser_clear_type();
+            info.type          = type;
+            info.directory_ptr = idx;
+            info_label         = label;
+            dl_type            = DISPLAYLIST_FILE_BROWSER_SELECT_FILE;
+
+            fill_pathname_join_special(drivers_dir,
+                  settings->paths.directory_system, "vulkan_drivers",
+                  sizeof(drivers_dir));
+            if (     *settings->paths.directory_system
+                  && !path_is_directory(drivers_dir))
+               path_mkdir(drivers_dir);
+
+            action_ok_get_file_browser_start_path(
+                  settings->paths.path_vulkan_driver,
+                  drivers_dir,
+                  parent_dir, sizeof(parent_dir), true);
+
+            info_path          = parent_dir;
+         }
+         break;
+#endif
       case ACTION_OK_DL_CORE_LIST:
          filebrowser_clear_type();
          info.type          = type;
@@ -1632,6 +1674,10 @@ int generic_action_ok_displaylist_push(
 #if TARGET_OS_IPHONE
          fill_pathname_abbreviate_special(tmp, parent_dir, sizeof(tmp));
          strlcpy(parent_dir, tmp, sizeof(parent_dir));
+#endif
+#if defined(HAVE_NFSCLIENT) || defined(HAVE_SMBCLIENT)
+         if (menu_path && menu_displaylist_is_network_root(menu_path))
+            parent_dir[0] = '\0';
 #endif
 
          info.type          = type;
@@ -2661,6 +2707,17 @@ static int generic_action_ok(const char *path,
                   settings->paths.path_rgui_theme_preset, action_path);
          }
          break;
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+      case ACTION_OK_LOAD_VULKAN_DRIVER:
+         flush_char = MENU_ENUM_LABEL_DEFERRED_VIDEO_OUTPUT_SETTINGS_LIST_STR;
+         if (settings)
+         {
+            configuration_set_string(settings,
+                  settings->paths.path_vulkan_driver, action_path);
+            vulkan_custom_driver_picked(settings->paths.path_vulkan_driver);
+         }
+         break;
+#endif
       case ACTION_OK_SUBSYSTEM_ADD:
          /* Return to the subsystem list (which rebuilds to offer the
           * next required ROM, or the Load entry once all are set)
@@ -2872,6 +2929,9 @@ DEFAULT_ACTION_OK_SET(action_ok_shader_preset_load,   ACTION_OK_LOAD_PRESET,    
 DEFAULT_ACTION_OK_SET(action_ok_shader_pass_load,     ACTION_OK_LOAD_SHADER_PASS,      MENU_ENUM_LABEL_SHADER_OPTIONS)
 #endif
 DEFAULT_ACTION_OK_SET(action_ok_rgui_menu_theme_preset_load,  ACTION_OK_LOAD_RGUI_MENU_THEME_PRESET,  MENU_ENUM_LABEL_MENU_SETTINGS)
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+DEFAULT_ACTION_OK_SET(action_ok_vulkan_driver_load,  ACTION_OK_LOAD_VULKAN_DRIVER,  MENU_ENUM_LABEL_DEFERRED_VIDEO_OUTPUT_SETTINGS_LIST)
+#endif
 DEFAULT_ACTION_OK_SET(action_ok_set_manual_content_scan_dat_file, ACTION_OK_SET_MANUAL_CONTENT_SCAN_DAT_FILE, MENU_ENUM_LABEL_DEFERRED_MANUAL_CONTENT_SCAN_LIST)
 
 static int action_ok_file_load(const char *path,
@@ -4554,9 +4614,9 @@ void action_ok_manual_content_scan_set_dir(const char *content_dir)
    menu_entries_flush_stack(MENU_ENUM_LABEL_DEFERRED_MANUAL_CONTENT_SCAN_LIST_STR, 0);
 }
 
-/* Whether Content Location's browser, or a folder entered from it,
- * is the current menu. Back leaves the browser type set; a folder
- * entered keeps the browser's label. */
+/* Whether Content Location's list of places or its browser, or a
+ * folder entered from it, is the current menu. Back leaves the browser
+ * type set; a folder entered keeps the browser's label. */
 bool action_ok_manual_content_scan_dir_browsing(void)
 {
    const char *menu_label = NULL;
@@ -4564,7 +4624,9 @@ bool action_ok_manual_content_scan_dir_browsing(void)
       return false;
    menu_entries_get_last_stack(NULL, &menu_label, NULL, NULL, NULL);
    return string_is_equal(menu_label,
-         MENU_ENUM_LABEL_MANUAL_CONTENT_SCAN_DIR_STR);
+         MENU_ENUM_LABEL_MANUAL_CONTENT_SCAN_DIR_STR)
+       || string_is_equal(menu_label,
+         MENU_ENUM_LABEL_DEFERRED_MANUAL_CONTENT_SCAN_DIR_LIST_STR);
 }
 
 #ifdef HAVE_LIBRETRODB
@@ -6341,6 +6403,7 @@ static int action_ok_sideload_core(const char *path,
 {
    const char *menu_path    = NULL;
    bool core_loaded         = false;
+   bool pushed;
    menu_handle_t *menu      = menu_state_get_ptr()->driver_data;
    settings_t *settings     = config_get_ptr();
    const char *dir_libretro = settings->paths.directory_libretro;
@@ -6357,16 +6420,19 @@ static int action_ok_sideload_core(const char *path,
       char backup_path[PATH_MAX_LENGTH];
       fill_pathname_join_special(
             backup_path, menu_path, path, sizeof(backup_path));
-      task_push_core_restore(backup_path, dir_libretro, &core_loaded);
+      pushed = task_push_core_restore(backup_path, dir_libretro, &core_loaded);
    }
    else
-      task_push_core_restore(path, dir_libretro, &core_loaded);
+      pushed = task_push_core_restore(path, dir_libretro, &core_loaded);
 
    /* Flush stack
     * > Since the 'sideload core' option is present
     *   in several locations, can't flush to a predefined
-    *   level - just go to the top */
-   menu_entries_flush_stack(NULL, 0);
+    *   level - just go to the top
+    * > Only for a sideload that started: one refused leaves the
+    *   user where they were, with the reason on screen */
+   if (pushed)
+      menu_entries_flush_stack(NULL, 0);
 
    return 0;
 }
@@ -7300,6 +7366,9 @@ STATIC_DEFAULT_ACTION_OK_FUNC(action_ok_push_accounts_cheevos_list, ACTION_OK_DL
 STATIC_DEFAULT_ACTION_OK_FUNC(action_ok_push_eject_disc, ACTION_OK_DL_EJECT_DISC)
 #endif
 STATIC_DEFAULT_ACTION_OK_FUNC(action_ok_rgui_menu_theme_preset, ACTION_OK_DL_RGUI_MENU_THEME_PRESET)
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+STATIC_DEFAULT_ACTION_OK_FUNC(action_ok_vulkan_driver, ACTION_OK_DL_VULKAN_DRIVER)
+#endif
 #ifdef HAVE_NETWORKING
 STATIC_DEFAULT_ACTION_OK_FUNC(action_ok_pl_thumbnails_updater_list, ACTION_OK_DL_PL_THUMBNAILS_UPDATER_LIST)
 #endif
@@ -7736,6 +7805,23 @@ int action_ok_push_manual_content_scan_dir_select(const char *path,
          idx, entry_idx,
          ACTION_OK_DL_MANUAL_SCAN_DIR_LIST);
 }
+
+/* The browser type lets an Apple file picker opened from the list
+ * set the location */
+static int action_ok_push_manual_content_scan_dir_list(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   filebrowser_set_type(FILEBROWSER_MANUAL_SCAN_DIR);
+   return generic_action_ok_displaylist_push(
+         path, NULL,
+         MENU_ENUM_LABEL_DEFERRED_MANUAL_CONTENT_SCAN_DIR_LIST_STR, type,
+         idx, entry_idx,
+         ACTION_OK_DL_PUSH_DEFAULT);
+}
+
+DEFAULT_ACTION_OK_DL_PUSH(action_ok_manual_content_scan_dir_start, FILEBROWSER_MANUAL_SCAN_DIR, ACTION_OK_DL_MANUAL_SCAN_DIR_LIST, settings->paths.directory_menu_content)
+DEFAULT_ACTION_OK_DL_PUSH(action_ok_manual_content_scan_dir_downloads, FILEBROWSER_MANUAL_SCAN_DIR, ACTION_OK_DL_MANUAL_SCAN_DIR_LIST, settings->paths.directory_core_assets)
+DEFAULT_ACTION_OK_DL_PUSH(action_ok_manual_content_scan_dir_drive, FILEBROWSER_MANUAL_SCAN_DIR, ACTION_OK_DL_MANUAL_SCAN_DIR_LIST, path)
 
 /* TODO/FIXME */
 static int action_ok_push_dropdown_setting_core_options_item_special(
@@ -9124,6 +9210,8 @@ static int action_ok_manual_content_scan_start(const char *path,
 {
    playlist_config_t playlist_config;
    settings_t *settings                = config_get_ptr();
+   if (task_dbscan_chain_refuse())
+      return 0;
    /* Note: playlist_config.path will set by the
     * task itself */
    playlist_config.capacity            = COLLECTION_SIZE;
@@ -9134,7 +9222,7 @@ static int action_ok_manual_content_scan_start(const char *path,
          settings->bools.playlist_portable_paths ?
                settings->paths.directory_menu_content : NULL);
 
-   task_push_manual_content_scan(true, NULL);
+   task_push_manual_content_scan(true, NULL, NULL);
    return 0;
 }
 
@@ -9600,6 +9688,8 @@ static int action_ok_playlist_refresh(const char *path,
    playlist_config = playlist_get_config(playlist);
    if (!playlist_config || !*playlist_config->path)
       return -1;
+   if (task_dbscan_chain_refuse())
+      return 0;
    stat = manual_content_scan_set_menu_from_playlist(playlist,
          settings->paths.path_content_database,
          settings->bools.show_hidden_files);
@@ -9684,7 +9774,35 @@ static int action_ok_playlist_refresh(const char *path,
             settings->bools.playlist_portable_paths ?
             settings->paths.directory_menu_content : NULL);
 
-      task_push_manual_content_scan(false, NULL);
+      task_push_manual_content_scan(false, NULL, NULL);
+   }
+   return 0;
+}
+
+static void action_ok_playlist_refresh_all_cb(
+      const task_dbscan_chain_result_t *res, void *user_data)
+{
+   char msg[128];
+   int  n = snprintf(msg, sizeof(msg),
+         msg_hash_to_str(MSG_PLAYLIST_MANAGER_REFRESH_ALL_DONE),
+         res->ran, res->skipped, res->failed);
+   /* the length written, not the one a translation asked for */
+   size_t _len = n < 0 ? 0 : (size_t)n >= sizeof(msg) ? sizeof(msg) - 1 : (size_t)n;
+   runloop_msg_queue_push(msg, _len, 1, 180, true, NULL,
+         MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
+}
+
+static int action_ok_playlist_refresh_all(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   task_dbscan_item_t *item = NULL;
+   if (task_dbscan_chain_refuse_start())
+      return 0;
+   if ((item = (task_dbscan_item_t*)calloc(1, sizeof(*item))))
+   {
+      item->kind = TASK_DBSCAN_ITEM_REFRESH_ALL;
+      task_push_dbscan_chain(item, 1, NULL,
+            action_ok_playlist_refresh_all_cb, NULL);
    }
    return 0;
 }
@@ -9730,6 +9848,7 @@ static int action_ok_nfs_browse(const char *path,
       const char *label, unsigned type, size_t idx, size_t entry_idx)
 {
    char nfs_path[PATH_MAX_LENGTH];
+   const char *menu_label = NULL;
 
    if (!menu_displaylist_build_nfs_root(nfs_path, sizeof(nfs_path)))
    {
@@ -9740,6 +9859,14 @@ static int action_ok_nfs_browse(const char *path,
             MESSAGE_QUEUE_CATEGORY_ERROR);
       return -1;
    }
+
+   menu_entries_get_last_stack(NULL, &menu_label, NULL, NULL, NULL);
+   if (string_is_equal(menu_label,
+            MENU_ENUM_LABEL_DEFERRED_MANUAL_CONTENT_SCAN_DIR_LIST_STR))
+      return generic_action_ok_displaylist_push(
+            nfs_path, nfs_path, label, type, idx, entry_idx,
+            ACTION_OK_DL_MANUAL_SCAN_DIR_LIST);
+
    filebrowser_set_type(FILEBROWSER_SELECT_FILE);
    return generic_action_ok_displaylist_push(
       nfs_path,
@@ -9755,6 +9882,7 @@ static int action_ok_smb_browse(const char *path,
       const char *label, unsigned type, size_t idx, size_t entry_idx)
 {
    settings_t *settings = config_get_ptr();
+   const char *menu_label = NULL;
    char smb_path[PATH_MAX_LENGTH];
 
    if (!settings->bools.smb_client_enable)
@@ -9776,6 +9904,13 @@ static int action_ok_smb_browse(const char *path,
             MESSAGE_QUEUE_CATEGORY_ERROR);
       return -1;
    }
+
+   menu_entries_get_last_stack(NULL, &menu_label, NULL, NULL, NULL);
+   if (string_is_equal(menu_label,
+            MENU_ENUM_LABEL_DEFERRED_MANUAL_CONTENT_SCAN_DIR_LIST_STR))
+      return generic_action_ok_displaylist_push(
+            smb_path, smb_path, label, type, idx, entry_idx,
+            ACTION_OK_DL_MANUAL_SCAN_DIR_LIST);
 
    /* Push as a content list under the same label Load Content uses:
     * files inside then bind to the detect-core handler instead of
@@ -9972,10 +10107,13 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
          {MENU_ENUM_LABEL_OSK_OVERLAY_PRESET,                  action_ok_osk_overlay_preset},
          {MENU_ENUM_LABEL_RECORD_CONFIG,                       action_ok_record_configfile},
          {MENU_ENUM_LABEL_STREAM_CONFIG,                       action_ok_stream_configfile},
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+         {MENU_ENUM_LABEL_VIDEO_VULKAN_DRIVER_PATH,            action_ok_vulkan_driver},
+#endif
 #ifdef HAVE_RGUI
          {MENU_ENUM_LABEL_RGUI_MENU_THEME_PRESET,              action_ok_rgui_menu_theme_preset},
 #endif
-         {MENU_ENUM_LABEL_MANUAL_CONTENT_SCAN_DIR,             action_ok_push_manual_content_scan_dir_select},
+         {MENU_ENUM_LABEL_MANUAL_CONTENT_SCAN_DIR,             action_ok_push_manual_content_scan_dir_list},
          {MENU_ENUM_LABEL_SCAN_METHOD,                         action_ok_scan_method},
          {MENU_ENUM_LABEL_SCAN_USE_DB,                         action_ok_scan_use_db},
          {MENU_ENUM_LABEL_SCAN_DB_SELECT,                      action_ok_scan_db_select},
@@ -10032,6 +10170,7 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
          {MENU_ENUM_LABEL_PLAYLIST_MANAGER_RESET_CORES,        action_ok_playlist_reset_cores},
          {MENU_ENUM_LABEL_PLAYLIST_MANAGER_CLEAN_PLAYLIST,     action_ok_playlist_clean},
          {MENU_ENUM_LABEL_PLAYLIST_MANAGER_REFRESH_PLAYLIST,   action_ok_playlist_refresh},
+         {MENU_ENUM_LABEL_PLAYLIST_MANAGER_REFRESH_ALL_PLAYLISTS, action_ok_playlist_refresh_all},
          {MENU_ENUM_LABEL_ACCOUNTS_RETRO_ACHIEVEMENTS,         action_ok_push_accounts_cheevos_list},
 #ifdef HAVE_LAKKA
          {MENU_ENUM_LABEL_EJECT_DISC,                          action_ok_push_eject_disc},
@@ -10171,6 +10310,9 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
          {MENU_ENUM_LABEL_RECORD_CONFIG,                       action_ok_record_configfile},
          {MENU_ENUM_LABEL_STREAM_CONFIG,                       action_ok_stream_configfile},
          {MENU_ENUM_LABEL_RGUI_MENU_THEME_PRESET,              action_ok_rgui_menu_theme_preset},
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+         {MENU_ENUM_LABEL_VIDEO_VULKAN_DRIVER_PATH,            action_ok_vulkan_driver},
+#endif
          {MENU_ENUM_LABEL_ACCOUNTS_RETRO_ACHIEVEMENTS,         action_ok_push_accounts_cheevos_list},
          {MENU_ENUM_LABEL_FAVORITES,                           action_ok_push_content_list},
          {MENU_ENUM_LABEL_DOWNLOADED_FILE_DETECT_CORE_LIST,    action_ok_push_downloads_dir},
@@ -10450,6 +10592,11 @@ static int menu_cbs_init_bind_ok_compare_type(menu_file_list_cbs_t *cbs,
          case FILE_TYPE_RGUI_THEME_PRESET:
             BIND_ACTION_OK(cbs, action_ok_rgui_menu_theme_preset_load);
             break;
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+         case FILE_TYPE_VULKAN_DRIVER:
+            BIND_ACTION_OK(cbs, action_ok_vulkan_driver_load);
+            break;
+#endif
          case FILE_TYPE_REMAP:
             BIND_ACTION_OK(cbs, action_ok_remap_file_load);
             break;
@@ -10868,6 +11015,33 @@ static int menu_cbs_init_bind_ok_compare_type(menu_file_list_cbs_t *cbs,
    return 0;
 }
 
+/* Content Location's places open its folder picker instead of
+ * Load Content's browser. Browse SMB Share and Browse NFS Export
+ * keep their own actions, which check the menu they are in. */
+static int menu_cbs_init_bind_ok_manual_content_scan_dir_list(
+      menu_file_list_cbs_t *cbs)
+{
+   switch (cbs->enum_idx)
+   {
+      case MENU_ENUM_LABEL_MANUAL_CONTENT_SCAN_DIR:
+         BIND_ACTION_OK(cbs, action_ok_push_manual_content_scan_dir_select);
+         break;
+      case MENU_ENUM_LABEL_FAVORITES:
+         BIND_ACTION_OK(cbs, action_ok_manual_content_scan_dir_start);
+         break;
+      case MENU_ENUM_LABEL_DOWNLOADED_FILE_DETECT_CORE_LIST:
+         BIND_ACTION_OK(cbs, action_ok_manual_content_scan_dir_downloads);
+         break;
+      case MENU_ENUM_LABEL_FILE_DETECT_CORE_LIST_PUSH_DIR:
+         BIND_ACTION_OK(cbs, action_ok_manual_content_scan_dir_drive);
+         break;
+      default:
+         return -1;
+   }
+
+   return 0;
+}
+
 int menu_cbs_init_bind_ok(menu_file_list_cbs_t *cbs,
       const char *path,
       const char *label, size_t lbl_len,
@@ -10878,6 +11052,11 @@ int menu_cbs_init_bind_ok(menu_file_list_cbs_t *cbs,
       return -1;
 
    BIND_ACTION_OK(cbs, action_ok_lookup_setting);
+
+   if (     string_is_equal(menu_label,
+               MENU_ENUM_LABEL_DEFERRED_MANUAL_CONTENT_SCAN_DIR_LIST_STR)
+         && menu_cbs_init_bind_ok_manual_content_scan_dir_list(cbs) == 0)
+      return 0;
 
    if (menu_cbs_init_bind_ok_compare_label(cbs, label) == 0)
       return 0;

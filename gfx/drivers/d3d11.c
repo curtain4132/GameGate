@@ -286,6 +286,11 @@ typedef struct d3d11_vertex_t
    float color[4];
 } d3d11_vertex_t;
 
+/* Staging textures lent to a software core for its frames: one the GPU
+ * may still be copying from, one the cached frame may point into, and
+ * one to lend. */
+#define D3D11_SW_LEND_SLOTS 3
+
 typedef struct
 {
    D3D11DeviceContext context;
@@ -551,6 +556,25 @@ typedef struct
       d3d11_texture_t texture;
       DXGI_FORMAT     format;
    } sw_direct;
+   /* Software frames the core renders straight into, without a copy on
+    * the CPU: staging textures lent through
+    * get_current_software_framebuffer, mapped READ_WRITE (host cached)
+    * without waiting, and copied on the GPU into chain.history[0] when
+    * the frame is pushed from one. A slot stays mapped until then - its
+    * memory is the core's - and only that copy unmaps it, retiring the
+    * cached frame that points into it. `last` is the slot the last
+    * pushed frame came from, which is not lent again while it may be
+    * the cached frame; `dims` and `format` are what the slots were made
+    * at. */
+   struct
+   {
+      D3D11Texture2D           staging[D3D11_SW_LEND_SLOTS];
+      D3D11_MAPPED_SUBRESOURCE mapped[D3D11_SW_LEND_SLOTS];
+      unsigned                 mapped_bits;
+      unsigned                 last;
+      unsigned                 dims;
+      DXGI_FORMAT              format;
+   } sw_lend;
    /* The back buffer size the copy was made at, packed. */
    unsigned              retained_dims;
    unsigned              retained_light;
@@ -749,6 +773,7 @@ static void d3d11_gfx_unload_texture_internal(d3d11_video_t *d3d11, uintptr_t ha
 
 static void d3d11_record_free(d3d11_video_t *d3d11);
 static void d3d11_views_release(d3d11_video_t *d3d11);
+static void d3d11_sw_lend_release(d3d11_video_t *d3d11);
 static void d3d11_views_publish(d3d11_video_t *d3d11);
 
 /* Sprite/font shader selection: HDR output uses the encoding
@@ -1694,6 +1719,11 @@ typedef struct
    d3d11_sprite_t*               acc;
    video_font_raster_block_t*    block;
    d3d11_video_t*                d3d11;
+   /* An RGBA8 texture's texels, when the device samples no A8: white
+    * with the coverage as alpha, for UpdateSubresource, grown to the
+    * largest region asked for and kept */
+   uint32_t*                     expand;
+   size_t                        expand_size;
    unsigned                      acc_count;
    unsigned                      acc_cap;
 } d3d11_font_t;
@@ -1703,30 +1733,52 @@ static void d3d11_font_update_atlas_region(
 
 /* (Re)makes the font texture at the atlas's size and uploads all of
  * it: at init, and when the atlas has grown. The context keeps a
- * released texture alive for draws already recorded against it. */
+ * released texture alive for draws already recorded against it. When
+ * the new texture cannot be made the old one stays, and the cells it
+ * holds keep being uploaded into it. */
 static void d3d11_font_make_texture(d3d11_video_t *d3d11,
       d3d11_font_t *font)
 {
-   font->texture.sampler     = d3d11->samplers[RARCH_FILTER_LINEAR][RARCH_WRAP_BORDER];
-   font->texture.desc.Width  = font->atlas->width;
-   font->texture.desc.Height = font->atlas->height;
-   font->texture.desc.Format = (font->atlas->format == FONT_ATLAS_FORMAT_A16)
+   d3d11_texture_t texture;
+   memset(&texture, 0, sizeof(texture));
+   texture.sampler     = d3d11->samplers[RARCH_FILTER_LINEAR][RARCH_WRAP_BORDER];
+   texture.desc.Width  = font->atlas->width;
+   texture.desc.Height = font->atlas->height;
+   texture.desc.Format = (font->atlas->format == FONT_ATLAS_FORMAT_A16)
          ? DXGI_FORMAT_R16_UNORM : DXGI_FORMAT_A8_UNORM;
-   d3d11_release_texture(&font->texture);
-   d3d11_init_texture(d3d11->device, &font->texture);
-   if (font->texture.staging)
+   /* A device that samples no A8 - some of feature level 9 - takes the
+    * coverage as the alpha of white RGBA8, which every feature level
+    * samples and the font shader reads the same way. No fallback a
+    * format list offers past A8 keeps the coverage in alpha. */
+   if (texture.desc.Format == DXGI_FORMAT_A8_UNORM)
    {
-      if (font->atlas->format == FONT_ATLAS_FORMAT_A16)
-         /* the generic path's conversion table does not cover R16;
-          * stage the whole atlas through the element-size-aware
-          * region helper instead */
-         d3d11_font_update_atlas_region(d3d11->context, font, 0,
-               VIDEO_SCALE_PACK(font->atlas->width, font->atlas->height));
-      else
-         d3d11_update_texture(
-               d3d11->context, font->atlas->width, font->atlas->height, font->atlas->width,
-               DXGI_FORMAT_A8_UNORM, font->atlas->buffer, &font->texture);
+      UINT support    = 0;
+      const UINT need = D3D11_FORMAT_SUPPORT_TEXTURE2D
+                      | D3D11_FORMAT_SUPPORT_SHADER_SAMPLE;
+      if (     FAILED(d3d11->device->lpVtbl->CheckFormatSupport(
+                  d3d11->device, DXGI_FORMAT_A8_UNORM, &support))
+            || (support & need) != need)
+         texture.desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
    }
+   if (     !d3d11_init_texture(d3d11->device, &texture)
+         || !texture.staging || !texture.view)
+   {
+      d3d11_release_texture(&texture);
+      return;
+   }
+   d3d11_release_texture(&font->texture);
+   font->texture = texture;
+   if (     font->atlas->format == FONT_ATLAS_FORMAT_A16
+         || font->texture.desc.Format != DXGI_FORMAT_A8_UNORM)
+      /* the generic path's conversion table covers neither R16 nor
+       * coverage into RGBA8's alpha; stage the whole atlas through the
+       * region helper, which does both, instead */
+      d3d11_font_update_atlas_region(d3d11->context, font, 0,
+            VIDEO_SCALE_PACK(font->atlas->width, font->atlas->height));
+   else
+      d3d11_update_texture(
+            d3d11->context, font->atlas->width, font->atlas->height, font->atlas->width,
+            DXGI_FORMAT_A8_UNORM, font->atlas->buffer, &font->texture);
    font->atlas->dirty = false;
 }
 
@@ -1786,6 +1838,7 @@ static void d3d11_font_free(void* data, bool is_threaded)
    Release(font->texture.handle);
    Release(font->texture.staging);
    Release(font->texture.view);
+   free(font->expand);
    free(font->acc);
    free(font);
 }
@@ -1800,34 +1853,52 @@ static int d3d11_font_get_message_width(void *data, const char *msg,
          font->font_data, msg, msg_len, scale);
 }
 
-/* Update only the atlas dirty rectangle of the A8 font texture:
- * map the staging texture, copy the changed rows, and issue a boxed
- * CopySubresourceRegion for just that area - or, with the staging
- * texture still the GPU's, hand the rows to UpdateSubresource.
+/* Update only the atlas dirty rectangles @r[0..@n) of the font
+ * texture: map the staging texture once, copy each one's rows, and
+ * issue a boxed CopySubresourceRegion for each - or, with the staging
+ * texture still the GPU's, hand each one's rows to UpdateSubresource.
  * The generic d3d11_update_texture() re-uploads the whole surface. */
-static void d3d11_font_update_atlas_region(
-      D3D11DeviceContext ctx, d3d11_font_t *font, unsigned xy0, unsigned xy1)
+static void d3d11_font_update_atlas_rects(D3D11DeviceContext ctx,
+      d3d11_font_t *font, const unsigned (*r)[2], unsigned n)
 {
-   unsigned y;
-   unsigned x0 = VIDEO_SCALE_W(xy0);
-   unsigned y0 = VIDEO_SCALE_H(xy0);
-   unsigned x1 = VIDEO_SCALE_W(xy1);
-   unsigned y1 = VIDEO_SCALE_H(xy1);
+   unsigned i, y, kept = 0;
+   D3D11_BOX box[FONT_ATLAS_DIRTY_MAX];
    D3D11_MAPPED_SUBRESOURCE mapped;
-   D3D11_BOX box;
    HRESULT hr;
+   size_t esz = (font->atlas->format == FONT_ATLAS_FORMAT_A16)
+         ? sizeof(uint16_t) : sizeof(uint8_t);
+   /* An RGBA8 texture, for a device that samples no A8: white, the
+    * coverage its alpha */
+   bool rgba  = font->texture.desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM;
 
-   if (     x1 <= x0 || y1 <= y0
-         || x1 > (unsigned)font->atlas->width
-         || y1 > (unsigned)font->atlas->height)
+   if (n > FONT_ATLAS_DIRTY_MAX)
+      n = FONT_ATLAS_DIRTY_MAX;
+   for (i = 0; i < n; i++)
+   {
+      unsigned x0 = VIDEO_SCALE_W(r[i][0]);
+      unsigned y0 = VIDEO_SCALE_H(r[i][0]);
+      unsigned x1 = VIDEO_SCALE_W(r[i][1]);
+      unsigned y1 = VIDEO_SCALE_H(r[i][1]);
+      /* Within the texture as well as the atlas: an atlas the texture
+       * could not follow is larger than it */
+      if (x1 > (unsigned)font->texture.desc.Width)
+         x1 = (unsigned)font->texture.desc.Width;
+      if (y1 > (unsigned)font->texture.desc.Height)
+         y1 = (unsigned)font->texture.desc.Height;
+      if (     x1 <= x0 || y1 <= y0
+            || x1 > (unsigned)font->atlas->width
+            || y1 > (unsigned)font->atlas->height)
+         continue;
+      box[kept].left   = x0;
+      box[kept].top    = y0;
+      box[kept].front  = 0;
+      box[kept].right  = x1;
+      box[kept].bottom = y1;
+      box[kept].back   = 1;
+      kept++;
+   }
+   if (!kept)
       return;
-
-   box.left   = x0;
-   box.top    = y0;
-   box.front  = 0;
-   box.right  = x1;
-   box.bottom = y1;
-   box.back   = 1;
 
    /* The staging texture may still be the GPU's from the last glyphs:
     * those go in through the driver instead, which never waits */
@@ -1835,34 +1906,85 @@ static void d3d11_font_update_atlas_region(
          D3D11_MAP_WRITE, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
    if (hr == DXGI_ERROR_WAS_STILL_DRAWING)
    {
-      size_t esz = (font->atlas->format == FONT_ATLAS_FORMAT_A16)
-            ? sizeof(uint16_t) : sizeof(uint8_t);
-      ctx->lpVtbl->UpdateSubresource(ctx,
-            (D3D11Resource)font->texture.handle, 0, &box,
-            font->atlas->buffer
-               + ((size_t)y0 * font->atlas->width + x0) * esz,
-            (UINT)(font->atlas->width * esz), 0);
+      for (i = 0; i < kept; i++)
+      {
+         if (rgba)
+         {
+            unsigned x;
+            unsigned w = box[i].right - box[i].left;
+            unsigned h = box[i].bottom - box[i].top;
+            if ((size_t)w * h > font->expand_size)
+            {
+               uint32_t *buf = (uint32_t*)malloc((size_t)w * h
+                     * sizeof(uint32_t));
+               if (!buf)
+                  continue;
+               free(font->expand);
+               font->expand      = buf;
+               font->expand_size = (size_t)w * h;
+            }
+            for (y = 0; y < h; y++)
+            {
+               const uint8_t *src = font->atlas->buffer
+                  + (size_t)(box[i].top + y) * font->atlas->width
+                  + box[i].left;
+               for (x = 0; x < w; x++)
+                  font->expand[(size_t)y * w + x] =
+                     ((uint32_t)src[x] << 24) | 0x00FFFFFFu;
+            }
+            ctx->lpVtbl->UpdateSubresource(ctx,
+                  (D3D11Resource)font->texture.handle, 0, &box[i],
+                  font->expand, (UINT)(w * sizeof(uint32_t)), 0);
+         }
+         else
+            ctx->lpVtbl->UpdateSubresource(ctx,
+                  (D3D11Resource)font->texture.handle, 0, &box[i],
+                  font->atlas->buffer
+                     + ((size_t)box[i].top * font->atlas->width
+                        + box[i].left) * esz,
+                  (UINT)(font->atlas->width * esz), 0);
+      }
       return;
    }
    if (FAILED(hr))
       return;
 
-   {
-      size_t esz = (font->atlas->format == FONT_ATLAS_FORMAT_A16)
-            ? sizeof(uint16_t) : sizeof(uint8_t);
-      for (y = y0; y < y1; y++)
-         memcpy((uint8_t*)mapped.pData + y * mapped.RowPitch
-                     + (size_t)x0 * esz,
-                font->atlas->buffer
-                     + ((size_t)y * font->atlas->width + x0) * esz,
-                (size_t)(x1 - x0) * esz);
-   }
+   for (i = 0; i < kept; i++)
+      for (y = box[i].top; y < box[i].bottom; y++)
+      {
+         const uint8_t *src = font->atlas->buffer
+               + ((size_t)y * font->atlas->width + box[i].left) * esz;
+         if (rgba)
+         {
+            unsigned x;
+            uint32_t *dst = (uint32_t*)((uint8_t*)mapped.pData
+                  + y * mapped.RowPitch) + box[i].left;
+            for (x = 0; x < box[i].right - box[i].left; x++)
+               dst[x] = ((uint32_t)src[x] << 24) | 0x00FFFFFFu;
+         }
+         else
+            memcpy((uint8_t*)mapped.pData + y * mapped.RowPitch
+                        + (size_t)box[i].left * esz,
+                   src, (size_t)(box[i].right - box[i].left) * esz);
+      }
 
    ctx->lpVtbl->Unmap(ctx, (D3D11Resource)font->texture.staging, 0);
 
-   ctx->lpVtbl->CopySubresourceRegion(
-         ctx, (D3D11Resource)font->texture.handle, 0, x0, y0, 0,
-         (D3D11Resource)font->texture.staging, 0, &box);
+   for (i = 0; i < kept; i++)
+      ctx->lpVtbl->CopySubresourceRegion(
+            ctx, (D3D11Resource)font->texture.handle, 0,
+            box[i].left, box[i].top, 0,
+            (D3D11Resource)font->texture.staging, 0, &box[i]);
+}
+
+/* The atlas region @xy0..@xy1, as one rectangle */
+static void d3d11_font_update_atlas_region(
+      D3D11DeviceContext ctx, d3d11_font_t *font, unsigned xy0, unsigned xy1)
+{
+   unsigned r[1][2];
+   r[0][0] = xy0;
+   r[0][1] = xy1;
+   d3d11_font_update_atlas_rects(ctx, font, (const unsigned (*)[2])r, 1);
 }
 
 static void d3d11_font_draw_sprites(d3d11_video_t *d3d11,
@@ -2190,8 +2312,14 @@ static void d3d11_font_upload_atlas(d3d11_video_t *d3d11,
    if (font->atlas->dirty)
    {
       if (font->texture.staging)
-         d3d11_font_update_atlas_region(d3d11->context, font,
-               font->atlas->dirty_xy0, font->atlas->dirty_xy1);
+      {
+         unsigned i, n = font_atlas_dirty_rects(font->atlas);
+         unsigned r[FONT_ATLAS_DIRTY_MAX][2];
+         for (i = 0; i < n; i++)
+            font_atlas_dirty_rect(font->atlas, i, &r[i][0], &r[i][1]);
+         d3d11_font_update_atlas_rects(d3d11->context, font,
+               (const unsigned (*)[2])r, n);
+      }
       font->atlas->dirty = false;
    }
 }
@@ -3943,6 +4071,7 @@ static void d3d11_gfx_free(void* data)
 
    d3d11_release_texture(&d3d11->chain.history[0]);
    d3d11_release_texture(&d3d11->sw_direct.texture);
+   d3d11_sw_lend_release(d3d11);
    d3d11_views_release(d3d11);
    Release(d3d11->frame.ubo);
    Release(d3d11->frame.vbo);
@@ -5694,6 +5823,158 @@ static bool d3d11_sw_direct_upload(d3d11_video_t *d3d11,
    return true;
 }
 
+/* The lent slots go, unmapped first. A cached frame may point into a
+ * mapped one, so it is retired before the memory goes. */
+static void d3d11_sw_lend_release(d3d11_video_t *d3d11)
+{
+   unsigned i;
+   if (d3d11->sw_lend.mapped_bits)
+      video_driver_cached_frame_retire();
+   for (i = 0; i < D3D11_SW_LEND_SLOTS; i++)
+   {
+      if (d3d11->sw_lend.mapped_bits & (1u << i))
+         d3d11->context->lpVtbl->Unmap(d3d11->context,
+               (D3D11Resource)d3d11->sw_lend.staging[i], 0);
+      Release(d3d11->sw_lend.staging[i]);
+      d3d11->sw_lend.staging[i] = NULL;
+   }
+   d3d11->sw_lend.mapped_bits = 0;
+   d3d11->sw_lend.dims        = 0;
+   d3d11->sw_lend.last        = 0;
+}
+
+/* Lends the core a staging slot to render its frame into. Only where
+ * the frame can go into chain.history[0] by a copy on the GPU - the
+ * texture at the frame's size and in the frame's format - and only for
+ * a slot the GPU is done copying from: one still busy is passed over
+ * and none is ever waited for; the core then renders into its own
+ * buffer this once. Declined too when the slot's row pitch is not the
+ * frame's tight pitch, as cores tend to ignore fb->pitch. */
+static bool d3d11_get_current_software_framebuffer(void *data,
+      struct retro_framebuffer *fb)
+{
+   d3d11_video_t   *d3d11 = (d3d11_video_t*)data;
+   d3d11_texture_t *hist;
+   unsigned bpp, dims, k;
+
+   if (     !d3d11 || !fb || !d3d11->context
+         || (d3d11->flags & D3D11_ST_FLAG_HW_IFACE_ENABLE)
+         || (     d3d11->format != DXGI_FORMAT_B8G8R8X8_UNORM
+               && d3d11->format != DXGI_FORMAT_B5G6R5_UNORM))
+      return false;
+   hist = &d3d11->chain.history[0];
+   bpp  = d3d11_format_bytes(d3d11->format);
+   dims = VIDEO_SCALE_PACK(fb->width, fb->height);
+   if (     !hist->handle
+         || hist->desc.Format != d3d11->format
+         || hist->desc.Width  != fb->width
+         || hist->desc.Height != fb->height)
+      return false;
+
+   if (     d3d11->sw_lend.dims   != dims
+         || d3d11->sw_lend.format != d3d11->format)
+   {
+      D3D11_TEXTURE2D_DESC desc = hist->desc;
+      d3d11_sw_lend_release(d3d11);
+      desc.MipLevels          = 1;
+      desc.ArraySize          = 1;
+      desc.SampleDesc.Count   = 1;
+      desc.SampleDesc.Quality = 0;
+      desc.BindFlags          = 0;
+      desc.MiscFlags          = 0;
+      desc.Usage              = D3D11_USAGE_STAGING;
+      /* Read as well: a core may read back what it rendered */
+      desc.CPUAccessFlags     = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
+      for (k = 0; k < D3D11_SW_LEND_SLOTS; k++)
+      {
+         d3d11->device->lpVtbl->CreateTexture2D(d3d11->device, &desc,
+               NULL, &d3d11->sw_lend.staging[k]);
+         if (!d3d11->sw_lend.staging[k])
+         {
+            d3d11_sw_lend_release(d3d11);
+            return false;
+         }
+      }
+      d3d11->sw_lend.dims   = dims;
+      d3d11->sw_lend.format = d3d11->format;
+   }
+
+   for (k = 1; k < D3D11_SW_LEND_SLOTS; k++)
+   {
+      unsigned slot = (d3d11->sw_lend.last + k) % D3D11_SW_LEND_SLOTS;
+      unsigned bit  = 1u << slot;
+      if (!(d3d11->sw_lend.mapped_bits & bit))
+      {
+         if (FAILED(d3d11->context->lpVtbl->Map(d3d11->context,
+                     (D3D11Resource)d3d11->sw_lend.staging[slot], 0,
+                     D3D11_MAP_READ_WRITE, D3D11_MAP_FLAG_DO_NOT_WAIT,
+                     &d3d11->sw_lend.mapped[slot])))
+            continue;
+         d3d11->sw_lend.mapped_bits |= bit;
+      }
+      if (d3d11->sw_lend.mapped[slot].RowPitch != fb->width * bpp)
+         return false;
+      fb->data         = d3d11->sw_lend.mapped[slot].pData;
+      fb->pitch        = d3d11->sw_lend.mapped[slot].RowPitch;
+      fb->format       = (d3d11->format == DXGI_FORMAT_B8G8R8X8_UNORM)
+         ? RETRO_PIXEL_FORMAT_XRGB8888 : RETRO_PIXEL_FORMAT_RGB565;
+      fb->memory_flags = RETRO_MEMORY_TYPE_CACHED;
+      return true;
+   }
+   return false;
+}
+
+/* The lent slot @frame was pushed from, or -1 for a frame from
+ * anywhere else; the slot is remembered as the one the cached frame
+ * may now point into. */
+static int d3d11_sw_lend_find(d3d11_video_t *d3d11, const void *frame,
+      unsigned width, unsigned height, unsigned pitch)
+{
+   unsigned k;
+   if (     !d3d11->sw_lend.mapped_bits
+         || d3d11->sw_lend.dims != VIDEO_SCALE_PACK(width, height))
+      return -1;
+   for (k = 0; k < D3D11_SW_LEND_SLOTS; k++)
+      if (     (d3d11->sw_lend.mapped_bits & (1u << k))
+            && d3d11->sw_lend.mapped[k].pData    == frame
+            && d3d11->sw_lend.mapped[k].RowPitch == pitch)
+      {
+         d3d11->sw_lend.last = k;
+         return (int)k;
+      }
+   return -1;
+}
+
+/* A frame pushed from lent slot @slot into chain.history[0], copied
+ * there on the GPU. Unmapped for the copy, so the cached frame, which
+ * points into the slot, is retired: a redraw draws history[0] as it
+ * stands. False when history[0] no longer takes it. */
+static bool d3d11_sw_lend_push(d3d11_video_t *d3d11,
+      D3D11DeviceContext ctx, int slot, unsigned width, unsigned height)
+{
+   D3D11_BOX box;
+   d3d11_texture_t *hist = &d3d11->chain.history[0];
+   if (     slot < 0
+         || !hist->handle
+         || hist->desc.Format != d3d11->sw_lend.format
+         || hist->desc.Width  != width
+         || hist->desc.Height != height)
+      return false;
+   box.left   = 0;
+   box.top    = 0;
+   box.front  = 0;
+   box.right  = width;
+   box.bottom = height;
+   box.back   = 1;
+   ctx->lpVtbl->Unmap(ctx,
+         (D3D11Resource)d3d11->sw_lend.staging[slot], 0);
+   d3d11->sw_lend.mapped_bits &= ~(1u << slot);
+   video_driver_cached_frame_retire();
+   ctx->lpVtbl->CopySubresourceRegion(ctx, (D3D11Resource)hist->handle,
+         0, 0, 0, 0, (D3D11Resource)d3d11->sw_lend.staging[slot], 0, &box);
+   return true;
+}
+
 /* Whether a preset's passes may read the frame where it is, through
  * hw_direct.view, as Original and as the first pass's Source: when it
  * keeps no history, which is copied out of chain.history[0], and the
@@ -6961,6 +7242,8 @@ static bool d3d11_gfx_frame_body(
    /* A software frame a preset may draw as views: written once the
     * views are decided, straight into each view's texture if they are */
    bool sw_pending                = false;
+   /* The lent slot it was rendered into, or -1 */
+   int sw_lend_slot               = -1;
    unsigned black_frame_insertion = video_info->black_frame_insertion;
    int bfi_light_frames;
    unsigned n;
@@ -7354,7 +7637,11 @@ static bool d3d11_gfx_frame_body(
       }
       else if (d3d11->chain.history[0].staging
             && frame != RETRO_HW_FRAME_BUFFER_VALID)
-         sw_pending = true;
+      {
+         sw_pending   = true;
+         sw_lend_slot = d3d11_sw_lend_find(d3d11, frame,
+               width, height, pitch);
+      }
    }
 
    views = d3d11_views_setup(d3d11, video_info, frame, &views_blend,
@@ -7376,7 +7663,11 @@ static bool d3d11_gfx_frame_body(
    else if (sw_pending)
    {
       sw_pending = false;
-      if (     (   !(d3d11->chain.shader_preset && video_info->shader_active)
+      /* Rendered into a lent slot: copied on the GPU, drawn from
+       * history[0] like any staged frame */
+      if (d3d11_sw_lend_push(d3d11, context, sw_lend_slot, width, height))
+         ;
+      else if ((   !(d3d11->chain.shader_preset && video_info->shader_active)
                 || d3d11_preset_reads_in_place(d3d11, NULL,
                    width, height))
             && d3d11_sw_direct_upload(d3d11, context,
@@ -9964,7 +10255,7 @@ static const video_poke_interface_t d3d11_poke_interface = {
    win32_show_cursor,
    NULL, /* grab_mouse_toggle */
    d3d11_gfx_get_current_shader,
-   NULL, /* get_current_software_framebuffer */
+   d3d11_get_current_software_framebuffer,
    d3d11_get_hw_render_interface,
 #ifdef HAVE_DXGI_HDR
    d3d11_set_hdr_menu_nits,

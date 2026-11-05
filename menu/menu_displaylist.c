@@ -86,6 +86,13 @@
 #include <media/media_detect_cd.h>
 #endif
 
+#ifdef HAVE_NFSCLIENT
+#include "../libretro-common/vfs/vfs_implementation_nfs.h"
+#endif
+#ifdef HAVE_SMBCLIENT
+#include "../libretro-common/vfs/vfs_implementation_smb.h"
+#endif
+
 #include "../audio/audio_driver.h"
 #include "../midi_driver.h"
 #include "../record/record_driver.h"
@@ -275,6 +282,136 @@ bool menu_displaylist_build_smb_root(char *s, size_t len)
    }
 
    return true;
+}
+#endif
+
+#if defined(HAVE_NFSCLIENT) || defined(HAVE_SMBCLIENT)
+/* What follows 'part' (without its trailing slashes) at the start
+ * of 's', or NULL. */
+static const char *menu_displaylist_skip_root_part(const char *s,
+      const char *part)
+{
+   size_t _len = strlen(part);
+   while (_len && part[_len - 1] == '/')
+      _len--;
+   if (strncmp(s, part, _len))
+      return NULL;
+   return s + _len;
+}
+
+bool menu_displaylist_is_network_root(const char *path)
+{
+   const char *rest     = NULL;
+   settings_t *settings = config_get_ptr();
+#ifdef HAVE_NFSCLIENT
+   if (     *settings->arrays.nfs_server
+         && string_starts_with_size(path, "nfs://", STRLEN_CONST("nfs://")))
+      rest = menu_displaylist_skip_root_part(path + STRLEN_CONST("nfs://"),
+            settings->arrays.nfs_server);
+#endif
+#ifdef HAVE_SMBCLIENT
+   if (     settings->bools.smb_client_enable
+         && *settings->arrays.smb_client_server_address
+         && string_starts_with_size(path, "smb://", STRLEN_CONST("smb://")))
+   {
+      rest = menu_displaylist_skip_root_part(path + STRLEN_CONST("smb://"),
+            settings->arrays.smb_client_server_address);
+      /* The VFS reads any first component as the configured share. */
+      if (rest && *rest == '/' && *settings->arrays.smb_client_share)
+      {
+         while (*rest == '/')
+            rest++;
+         while (*rest && *rest != '/')
+            rest++;
+      }
+   }
+#endif
+   if (!rest)
+      return false;
+   while (*rest == '/')
+      rest++;
+   return !*rest;
+}
+
+#ifdef HAVE_NFSCLIENT
+/* The VFS reads the server's paths against the export, which the path
+ * itself does not show. */
+bool menu_displaylist_nfs_title_path(char *s, size_t len, const char *path)
+{
+   size_t _len, export_len;
+   const char *rest;
+   settings_t *settings = config_get_ptr();
+   const char *export_p = settings->arrays.nfs_export;
+
+   if (     !*settings->arrays.nfs_server
+         || !string_starts_with_size(path, "nfs://", STRLEN_CONST("nfs://")))
+      return false;
+   rest = menu_displaylist_skip_root_part(path + STRLEN_CONST("nfs://"),
+         settings->arrays.nfs_server);
+   if (!rest || (*rest && *rest != '/'))
+      return false;
+
+   while (*export_p == '/')
+      export_p++;
+   export_len = strlen(export_p);
+   while (export_len && export_p[export_len - 1] == '/')
+      export_len--;
+   _len = (size_t)(rest - path);
+   if (!export_len || _len + 1 + export_len >= len)
+      return false;
+
+   memcpy(s, path, _len);
+   s[_len++] = '/';
+   memcpy(s + _len, export_p, export_len);
+   _len     += export_len;
+   s[_len]   = '\0';
+   while (*rest == '/')
+      rest++;
+   if (*rest && _len + 1 < len)
+   {
+      s[_len++] = '/';
+      strlcpy(s + _len, rest, len - _len);
+   }
+   return true;
+}
+#endif
+#endif
+
+#if defined(HAVE_NFSCLIENT) || defined(HAVE_SMBCLIENT)
+/* Why a network directory could not be listed, from its client,
+ * beside the settings it ran with. */
+static void filebrowser_log_net_failure(const char *path)
+{
+   settings_t *settings = config_get_ptr();
+   const char *why      = NULL;
+#ifdef HAVE_NFSCLIENT
+   if (string_starts_with_size(path, "nfs://", STRLEN_CONST("nfs://")))
+   {
+      const char *export_p = settings->arrays.nfs_export;
+      why = nfs_get_last_error();
+      RARCH_ERR("[NFS] Cannot list \"%s\" (version %u, port %u, export %s%s%s): %s.\n",
+            path,
+            settings->uints.nfs_version ? settings->uints.nfs_version : 3,
+            settings->uints.nfs_port,
+            *export_p ? "\"" : "", *export_p ? export_p : "none",
+            *export_p ? "\"" : "",
+            *why ? why : "no reason given");
+   }
+#endif
+#ifdef HAVE_SMBCLIENT
+   if (string_starts_with_size(path, "smb://", STRLEN_CONST("smb://")))
+   {
+      unsigned auth = settings->uints.smb_client_auth_mode;
+      why = smb_get_last_error();
+      RARCH_ERR("[SMB] Cannot list \"%s\" (server \"%s\", share \"%s\", auth %s): %s.\n",
+            path,
+            settings->arrays.smb_client_server_address,
+            settings->arrays.smb_client_share,
+            auth == RETRO_SMB2_SEC_KRB5    ? "Kerberos"
+            : auth == RETRO_SMB2_SEC_NTLMSSP ? "NTLMSSP" : "auto",
+            *why ? why : "no reason given");
+   }
+#endif
 }
 #endif
 
@@ -506,7 +643,8 @@ static int filebrowser_parse(
       if (   type_default == FILE_TYPE_SHADER_PRESET
           || type_default == FILE_TYPE_SHADER
           || type_default == FILE_TYPE_OVERLAY
-          || type_default == FILE_TYPE_OSK_OVERLAY)
+          || type_default == FILE_TYPE_OSK_OVERLAY
+          || type_default == FILE_TYPE_VULKAN_DRIVER)
          filter_ext = true;
 
       if (string_is_equal(label, MENU_ENUM_LABEL_SCAN_FILE_STR))
@@ -612,6 +750,11 @@ static int filebrowser_parse(
       const char *str = path_is_compressed
          ? msg_hash_to_str(MENU_ENUM_LABEL_VALUE_UNABLE_TO_READ_COMPRESSED_FILE)
          : msg_hash_to_str(MENU_ENUM_LABEL_VALUE_DIRECTORY_NOT_FOUND);
+
+#if defined(HAVE_NFSCLIENT) || defined(HAVE_SMBCLIENT)
+      if (!path_is_compressed && path && *path)
+         filebrowser_log_net_failure(path);
+#endif
 
       menu_entries_append(info_list, str, "",
             MENU_ENUM_LABEL_VALUE_DIRECTORY_NOT_FOUND, 0, 0, 0, NULL);
@@ -6250,6 +6393,17 @@ static unsigned menu_displaylist_parse_playlist_manager_list(
          count++;
 #endif
 
+   /* None keeps the "No entries" fallback */
+   if (count)
+   {
+      menu_entries_prepend(list,
+            msg_hash_to_str(MENU_ENUM_LABEL_VALUE_PLAYLIST_MANAGER_REFRESH_ALL_PLAYLISTS),
+            MENU_ENUM_LABEL_PLAYLIST_MANAGER_REFRESH_ALL_PLAYLISTS_STR,
+            MENU_ENUM_LABEL_PLAYLIST_MANAGER_REFRESH_ALL_PLAYLISTS,
+            MENU_SETTING_ACTION, 0, 0);
+      count++;
+   }
+
    return count;
 }
 
@@ -10116,9 +10270,25 @@ unsigned menu_displaylist_build_list(
          break;
       case DISPLAYLIST_LOAD_CONTENT_LIST:
       case DISPLAYLIST_LOAD_CONTENT_SPECIAL:
+      case DISPLAYLIST_MANUAL_CONTENT_SCAN_DIR_LIST:
       {
          core_info_list_t *info_list = NULL;
          core_info_get_list(&info_list);
+
+         if (type == DISPLAYLIST_MANUAL_CONTENT_SCAN_DIR_LIST)
+         {
+            const char *content_dir = NULL;
+            /* Not stat'd here: a network location would block every
+             * build; a stored folder that is gone falls back when opened */
+            if (     manual_content_scan_get_menu_content_dir(&content_dir)
+                  && menu_entries_append(list,
+                     msg_hash_to_str(
+                        MENU_ENUM_LABEL_VALUE_MANUAL_CONTENT_SCAN_DIR),
+                     MENU_ENUM_LABEL_MANUAL_CONTENT_SCAN_DIR_STR,
+                     MENU_ENUM_LABEL_MANUAL_CONTENT_SCAN_DIR,
+                     MENU_SETTING_MANUAL_CONTENT_SCAN_DIR, 0, 0, NULL))
+               count++;
+         }
 
          if (*settings->paths.directory_menu_content)
             if (menu_entries_append(list,
@@ -10173,7 +10343,8 @@ unsigned menu_displaylist_build_list(
          }
 #endif
          if (     !settings->bools.kiosk_mode_enable
-               &&  settings->bools.settings_show_file_browser)
+               &&  settings->bools.settings_show_file_browser
+               &&  type != DISPLAYLIST_MANUAL_CONTENT_SCAN_DIR_LIST)
          {
             menu_entries_append(list,
                   msg_hash_to_str(MENU_ENUM_LABEL_VALUE_MENU_FILE_BROWSER_SETTINGS),
@@ -12174,6 +12345,9 @@ unsigned menu_displaylist_build_list(
                   { MENU_ENUM_LABEL_VIDEO_THREADED, PARSE_ONLY_BOOL, false },
                   { MENU_ENUM_LABEL_VIDEO_GPU_INDEX, PARSE_ONLY_INT, false },
                   { MENU_ENUM_LABEL_VIDEO_MONITOR_INDEX, PARSE_ONLY_UINT, false },
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+                  { MENU_ENUM_LABEL_VIDEO_VULKAN_DRIVER_PATH, PARSE_ONLY_PATH, false },
+#endif
                   { MENU_ENUM_LABEL_VIDEO_SWAPCHAIN_BIT_DEPTH, PARSE_ONLY_UINT, false },
                   { MENU_ENUM_LABEL_VIDEO_HW_DECODE, PARSE_ONLY_UINT, false },
                };
@@ -17350,6 +17524,7 @@ static bool menu_displaylist_ctl_internal(
 #endif
          case DISPLAYLIST_LOAD_CONTENT_LIST:
          case DISPLAYLIST_LOAD_CONTENT_SPECIAL:
+         case DISPLAYLIST_MANUAL_CONTENT_SCAN_DIR_LIST:
          case DISPLAYLIST_OPTIONS_REMAPPINGS:
          case DISPLAYLIST_VIDEO_SETTINGS_LIST:
          case DISPLAYLIST_AUDIO_SETTINGS_LIST:
@@ -18365,6 +18540,7 @@ static bool menu_displaylist_ctl_internal(
          case DISPLAYLIST_CONFIG_FILES:
          case DISPLAYLIST_REMAP_FILES:
          case DISPLAYLIST_RGUI_THEME_PRESETS:
+         case DISPLAYLIST_VULKAN_DRIVERS:
          case DISPLAYLIST_STREAM_CONFIG_FILES:
          case DISPLAYLIST_RECORD_CONFIG_FILES:
          case DISPLAYLIST_OVERLAYS:
@@ -18396,6 +18572,10 @@ static bool menu_displaylist_ctl_internal(
                case DISPLAYLIST_RGUI_THEME_PRESETS:
                   info->type_default = FILE_TYPE_RGUI_THEME_PRESET;
                   info->exts         = strldup("cfg", sizeof("cfg"));
+                  break;
+               case DISPLAYLIST_VULKAN_DRIVERS:
+                  info->type_default = FILE_TYPE_VULKAN_DRIVER;
+                  info->exts         = strldup("zip", sizeof("zip"));
                   break;
                case DISPLAYLIST_STREAM_CONFIG_FILES:
                   info->type_default = FILE_TYPE_STREAM_CONFIG;
@@ -19336,6 +19516,19 @@ static bool menu_displaylist_ctl_internal(
 
                if (menu_displaylist_build_smb_root(smb_root, sizeof(smb_root)))
                   if (menu_entries_append(info->list, smb_root, "",
+                           load_content ?
+                           MENU_ENUM_LABEL_FILE_DETECT_CORE_LIST_PUSH_DIR :
+                           MENU_ENUM_LABEL_FILE_BROWSER_DIRECTORY,
+                           FILE_TYPE_DIRECTORY, 0, 0, NULL))
+                     count++;
+            }
+#endif
+#ifdef HAVE_NFSCLIENT
+            {
+               char nfs_root[PATH_MAX_LENGTH];
+
+               if (menu_displaylist_build_nfs_root(nfs_root, sizeof(nfs_root)))
+                  if (menu_entries_append(info->list, nfs_root, "",
                            load_content ?
                            MENU_ENUM_LABEL_FILE_DETECT_CORE_LIST_PUSH_DIR :
                            MENU_ENUM_LABEL_FILE_BROWSER_DIRECTORY,

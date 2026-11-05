@@ -7402,10 +7402,11 @@ bool command_event_main_state(unsigned cmd)
                      settings->uints.savestate_max_keep;
                bool frame_time_counter_auto_reset             =
                      settings->bools.frame_time_counter_auto_reset;
+               bool queued                                    = true;
 
                if (cmd == CMD_EVENT_SAVE_STATE)
                {
-                  bool queued = content_save_state(state_path, true);
+                  queued = content_save_state(state_path, true);
                   RARCH_LOG("[State] Save dispatch for slot %d, path "
                         "\"%s\": content_save_state queued=%s "
                         "(auto_index=%s, max_keep=%u). NOTE: actual disk "
@@ -7415,18 +7416,29 @@ bool command_event_main_state(unsigned cmd)
                         queued ? "yes" : "NO",
                         savestate_auto_index ? "on" : "off",
                         savestate_max_keep);
+                  /* Turned away - the saves and loads held behind the
+                   * one in flight are already at their bound: said,
+                   * rather than the hotkey doing nothing */
+                  if (!queued)
+                     _len = snprintf(msg, sizeof(msg), "%s \"%s\".",
+                           msg_hash_to_str(MSG_FAILED_TO_SAVE_STATE_TO),
+                           path_basename(state_path));
                }
                else
                   content_save_state_to_ram();
 
-               /* Clean up excess savestates if necessary */
-               if (savestate_auto_index && (savestate_max_keep > 0))
+               /* Clean up excess savestates if necessary: not for a
+                * save that was turned away, which wrote nothing */
+               if (     queued
+                     && savestate_auto_index && (savestate_max_keep > 0))
                   command_event_set_savestate_garbage_collect(settings);
 
                if (frame_time_counter_auto_reset)
                   video_st->frame_time_count = 0;
 
-               ret      = true;
+               /* false for a save turned away, so the caller can take
+                * back the slot it advanced for it */
+               ret      = queued;
             }
             break;
          case CMD_EVENT_LOAD_STATE:
@@ -7443,6 +7455,12 @@ bool command_event_main_state(unsigned cmd)
                   command_post_state_loaded();
                   ret = true;
                }
+               /* Turned away (the hold behind the state task in flight
+                * is full) or not begun: said, rather than nothing */
+               else if (cmd == CMD_EVENT_LOAD_STATE)
+                  _len = strlcpy(msg,
+                        msg_hash_to_str(MSG_FAILED_TO_LOAD_STATE),
+                        sizeof(msg));
             }
             break;
         case CMD_EVENT_UNDO_LOAD_STATE:

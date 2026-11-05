@@ -503,6 +503,11 @@ typedef struct gl2_renderchain_data
 typedef struct
 {
    gl2_t *gl;
+   /* The texels each upload is converted into, grown to the largest
+    * one asked for and kept: the whole texture for a respecify, made
+    * before the texture takes a grown atlas's size */
+   uint8_t *scratch;
+   size_t scratch_size;
    GLuint tex;
    unsigned tex_dims;            /* VIDEO_SCALE_PACK, the atlas texture */
    bool respecify;               /* The atlas grew: remake the texture */
@@ -1128,7 +1133,23 @@ static void gl2_raster_font_free(void *data,
       font->tex = 0;
    }
 
+   free(font->scratch);
    free(font);
+}
+
+/* Grows the font's upload scratch to @size bytes; false, with it as
+ * it was, when that cannot be had */
+static bool gl2_raster_font_scratch(gl2_raster_t *font, size_t size)
+{
+   uint8_t *buf;
+   if (size <= font->scratch_size)
+      return true;
+   if (!(buf = (uint8_t*)malloc(size)))
+      return false;
+   free(font->scratch);
+   font->scratch      = buf;
+   font->scratch_size = size;
+   return true;
 }
 
 /* Converts atlas texels to LUMINANCE_ALPHA, opaque white with the
@@ -1139,7 +1160,7 @@ static void gl2_raster_font_free(void *data,
  * eight bytes and reads the same under any GL_UNPACK_ALIGNMENT, and is
  * packed tightly, which OpenGL ES 2 needs for want of
  * GL_UNPACK_ROW_LENGTH. */
-static void gl2_raster_font_upload_atlas(gl2_raster_t *font,
+static bool gl2_raster_font_upload_atlas(gl2_raster_t *font,
       unsigned xy0, unsigned xy1, bool respecify)
 {
    unsigned x, y, x0, y0, x1, y1, xe;
@@ -1165,15 +1186,22 @@ static void gl2_raster_font_upload_atlas(gl2_raster_t *font,
       x1 = VIDEO_SCALE_W(xy1);
       y1 = VIDEO_SCALE_H(xy1);
       if (x1 <= x0 || y1 <= y0 || x1 > aw || y1 > ah)
-         return;
+         return true;
       x0 &= ~3u;
       x1  = (x1 + 3) & ~3u;
+      /* Within the texture: an atlas it has not yet followed is larger
+       * than it */
       if (x1 > tex_w)
          x1 = tex_w;
+      if (y1 > tex_h)
+         y1 = tex_h;
+      if (x1 <= x0 || y1 <= y0)
+         return true;
    }
 
-   if (!(tmp = (uint8_t*)malloc((size_t)(x1 - x0) * (y1 - y0) * 2)))
-      return;
+   if (!gl2_raster_font_scratch(font, (size_t)(x1 - x0) * (y1 - y0) * 2))
+      return false;
+   tmp = font->scratch;
 
    dst = tmp;
    for (y = y0; y < y1; y++)
@@ -1192,6 +1220,10 @@ static void gl2_raster_font_upload_atlas(gl2_raster_t *font,
       dst += (size_t)(x1 - xe) * 2;
    }
 
+   /* Tightly packed: no row length left from another upload */
+   if (font->gl && (font->gl->flags & GL2_FLAG_HAVE_UNPACK_ROW_LENGTH))
+      glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+
    if (respecify)
       glTexImage2D(GL_TEXTURE_2D, 0, gl_internal,
             tex_w, tex_h,
@@ -1201,7 +1233,7 @@ static void gl2_raster_font_upload_atlas(gl2_raster_t *font,
             (GLsizei)(x1 - x0), (GLsizei)(y1 - y0),
             gl_format, GL_UNSIGNED_BYTE, tmp);
 
-   free(tmp);
+   return true;
 }
 
 static void *gl2_raster_font_init(void *data,
@@ -1278,13 +1310,16 @@ static void gl2_raster_font_draw_vertices(gl2_t *gl,
    }
    else if (font->atlas->dirty)
    {
+      /* Kept dirty, all of it, while a region cannot be sent */
+      bool sent = true;
       unsigned r, xy0, xy1;
       for (r = 0; r < font_atlas_dirty_rects(font->atlas); r++)
       {
          font_atlas_dirty_rect(font->atlas, r, &xy0, &xy1);
-         gl2_raster_font_upload_atlas(font, xy0, xy1, false);
+         if (!gl2_raster_font_upload_atlas(font, xy0, xy1, false))
+            sent = false;
       }
-      font->atlas->dirty   = false;
+      font->atlas->dirty   = !sent;
    }
 
    if (gl->shader)
@@ -1417,6 +1452,25 @@ static void gl2_raster_font_setup_viewport(
             gl->shader_data, VIDEO_SHADER_STOCK_BLEND, true);
 }
 
+/* Asked for before anything is laid out: the atlas may have grown,
+ * and the texture coordinates are taken from the texture's size. The
+ * texture takes the new size only with the scratch to fill it in hand,
+ * sent by the next draw's respecify. */
+static void gl2_raster_font_follow_atlas(gl2_raster_t *font)
+{
+   unsigned tex_dims;
+   font->atlas = font->font_driver->get_atlas(font->font_data);
+   tex_dims    = VIDEO_SCALE_PACK(next_pow2(font->atlas->width),
+         next_pow2(font->atlas->height));
+   if (     tex_dims != font->tex_dims
+         && gl2_raster_font_scratch(font, (size_t)VIDEO_SCALE_W(tex_dims)
+            * VIDEO_SCALE_H(tex_dims) * 2))
+   {
+      font->tex_dims  = tex_dims;
+      font->respecify = true;
+   }
+}
+
 static void gl2_raster_font_render_msg(
       void *userdata,
       void *data,
@@ -1437,18 +1491,7 @@ static void gl2_raster_font_render_msg(
    if (!font || !msg || !*msg || !gl)
       return;
 
-   /* Asked for before anything is laid out: it may have grown, and the
-    * texture coordinates are taken from the texture's size */
-   font->atlas = font->font_driver->get_atlas(font->font_data);
-   {
-      unsigned tex_dims = VIDEO_SCALE_PACK(next_pow2(font->atlas->width),
-            next_pow2(font->atlas->height));
-      if (tex_dims != font->tex_dims)
-      {
-         font->tex_dims  = tex_dims;
-         font->respecify = true;
-      }
-   }
+   gl2_raster_font_follow_atlas(font);
 
    font_driver_resolve_params(params, &rp);
    x           = rp.x;
@@ -8015,6 +8058,15 @@ static const gfx_ctx_driver_t *gl2_get_context(gl2_t *gl)
             gfx_ctx->ident);
    }
 
+   /* A kept context comes with the shared one it had, and the core is
+    * not reset: it goes on with the objects it made. That holds only
+    * if it renders in the same one of the two as before - framebuffer
+    * and vertex array objects are not shared between them, and a
+    * threaded video toggle moves the core from one to the other. */
+   if (gfx_ctx && hwr->context_type != RETRO_HW_CONTEXT_NONE)
+      video_driver_hw_context_shared_note(
+            (gl->flags & GL2_FLAG_SHARED_CONTEXT_USE) ? true : false);
+
    return gfx_ctx;
 }
 
@@ -8649,6 +8701,10 @@ static void *gl2_init(const video_info_t *video)
    gl2_desktop_xr_start(gl);
    if (gl->desktop_xr)
       gl->desktop_xr->window_interval = interval;
+#endif
+#ifdef GL2_VIEWS
+   /* get_flags reads it before the first frame too */
+   gl2_views_publish(gl);
 #endif
 
    /* Init leaves the core's context current for context_reset on this

@@ -33,6 +33,7 @@
 #include <encodings/base64.h>
 #include <string/stdstring.h>
 #include <streams/interface_stream.h>
+#include <retro_atomic.h>
 
 #ifdef HAVE_RBMP
 #include <formats/rbmp.h>
@@ -73,8 +74,17 @@ enum screenshot_task_flags
    /* the written PNG is read back for the callback */
    SS_TASK_FLAG_WANT_IMAGE          = (1 << 8),
    /* encoded into memory for the callback; no file is written */
-   SS_TASK_FLAG_MEMORY              = (1 << 9)
+   SS_TASK_FLAG_MEMORY              = (1 << 9),
+   /* holds screenshot_file_claim until the task finishes */
+   SS_TASK_FLAG_CLAIM               = (1 << 10)
 };
+
+/* One screenshot that writes a file at a time, among screenshots
+ * only. As a blocking task it also turned away every state save and
+ * load pushed while it encoded - a save's thumbnail, or a full-size
+ * capture of a 4K output, held off Load State until it was through. */
+static retro_atomic_int_t screenshot_file_claim =
+   RETRO_ATOMIC_INT_INITIALIZER(0);
 
 typedef struct screenshot_task_state screenshot_task_state_t;
 
@@ -453,6 +463,12 @@ task_finished:
    if (task)
       task_set_flags(task, RETRO_TASK_FLG_FINISHED, true);
 
+   if (state && (state->flags & SS_TASK_FLAG_CLAIM))
+   {
+      state->flags &= ~SS_TASK_FLAG_CLAIM;
+      retro_atomic_store_release_int(&screenshot_file_claim, 0);
+   }
+
 #if defined(HAVE_RPNG)
    /* Cancelled mid-encode: the partial file goes */
    if (state && state->enc)
@@ -476,11 +492,41 @@ task_finished:
    }
 }
 
+/* Screenshots taken while one is encoding: held, in order, and pushed
+ * as each one ahead of them finishes. Turned away, the Screenshot
+ * hotkey did nothing while a save's thumbnail or an achievement's
+ * capture encoded, and a thumbnail was skipped behind a screenshot.
+ * Each holds its own copy of the frame, taken when it was asked for.
+ * Frame thread only: take_screenshot() and the task's callback run
+ * there. Bounded: past it a screenshot is refused, as all were. */
+#define SCREENSHOTS_HELD_MAX 4
+static retro_task_t *screenshots_held[SCREENSHOTS_HELD_MAX];
+static unsigned      screenshots_held_count = 0;
+
+/* From a screenshot's callback: the next held one takes the claim. */
+static void screenshots_release_held(void)
+{
+   unsigned i;
+   retro_task_t *task;
+   if (     !screenshots_held_count
+         || !retro_atomic_cas_int(&screenshot_file_claim, 0, 1))
+      return;
+   task = screenshots_held[0];
+   for (i = 1; i < screenshots_held_count; i++)
+      screenshots_held[i - 1] = screenshots_held[i];
+   screenshots_held[--screenshots_held_count] = NULL;
+   ((screenshot_task_state_t*)task->state)->flags |= SS_TASK_FLAG_CLAIM;
+   task_queue_push(task);
+}
+
 static void task_screenshot_callback(retro_task_t *task,
       void *task_data,
       void *user_data, const char *error)
 {
    screenshot_task_state_t *state = NULL;
+
+   /* this one's claim went as it finished */
+   screenshots_release_held();
 
    if (!task)
       return;
@@ -836,8 +882,7 @@ static bool screenshot_dump(
          return false;
       }
 
-      /* a frame writes no file, so it waits on no screenshot */
-      task->type         = frame_max ? TASK_TYPE_NONE : TASK_TYPE_BLOCKING;
+      task->type         = TASK_TYPE_NONE;
       task->state        = state;
       task->handler      = task_screenshot_handler;
       if (savestate || frame_max)
@@ -863,10 +908,31 @@ static bool screenshot_dump(
             task->title = strdup(msg_hash_to_str(MSG_TAKING_SCREENSHOT));
       }
 
-      if (task_queue_push(task))
+      /* A frame writes no file, so it waits on no screenshot. One that
+       * does goes in with the claim, or is held behind the screenshot
+       * that has it; its callback hands the claim on. */
+      if (!frame_max)
+      {
+         task->callback  = task_screenshot_callback;
+         if (     screenshots_held_count
+               || !retro_atomic_cas_int(&screenshot_file_claim, 0, 1))
+         {
+            if (screenshots_held_count < SCREENSHOTS_HELD_MAX)
+            {
+               screenshots_held[screenshots_held_count++] = task;
+               return true;
+            }
+         }
+         else
+            state->flags |= SS_TASK_FLAG_CLAIM;
+      }
+
+      if (     (frame_max || (state->flags & SS_TASK_FLAG_CLAIM))
+            && task_queue_push(task))
          return true;
 
-      /* There is already a blocking task going on */
+      if (state->flags & SS_TASK_FLAG_CLAIM)
+         retro_atomic_store_release_int(&screenshot_file_claim, 0);
       if (task->title)
          task_free_title(task);
 

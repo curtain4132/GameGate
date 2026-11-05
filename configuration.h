@@ -1531,6 +1531,9 @@ typedef struct settings
       char path_cheat_settings[PATH_MAX_LENGTH];
       char path_font[PATH_MAX_LENGTH];
       char path_rgui_theme_preset[PATH_MAX_LENGTH];
+#ifdef HAVE_VULKAN_CUSTOM_DRIVER
+      char path_vulkan_driver[PATH_MAX_LENGTH];
+#endif
       char app_icon[PATH_MAX_LENGTH];
 
       char browse_url[4096];      /* TODO/FIXME - check size */
@@ -1770,6 +1773,14 @@ void config_set_video_screen_xr(unsigned screen,
 void config_set_video_menu_xr(const struct video_screen_xr *values);
 
 void config_set_defaults(settings_t *target);
+
+#ifdef ANDROID
+/* Defined in frontend/drivers/platform_unix.c.  Sets the drivers and
+ * audio latency the device is best served by, as the settings' own
+ * values over the built-in defaults: on a fresh install's first start,
+ * and on "Reset to Default Configuration". */
+void android_apply_device_defaults(settings_t *settings);
+#endif
 
 void config_load(void);
 

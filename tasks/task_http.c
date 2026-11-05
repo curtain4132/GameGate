@@ -579,10 +579,15 @@ static void task_http_transfer_cleanup(retro_task_t *task)
    }
 }
 
+/* A finished transfer is no longer in flight, though it stays in the
+ * queue until its callback has run: a GET retried from that callback
+ * (the achievement badge downloader's, after a network error) was
+ * refused as its own duplicate, and the retry never happened. */
 static bool task_http_finder(retro_task_t *task, void *user_data)
 {
    http_handle_t *http = NULL;
-   if (task && (task->handler == task_http_transfer_handler) && user_data)
+   if (     task && (task->handler == task_http_transfer_handler) && user_data
+         && !(task_get_flags(task) & RETRO_TASK_FLG_FINISHED))
       if ((http = (http_handle_t*)task->state))
          return http->connection_url
              && string_is_equal(http->connection_url, (const char*)user_data);
@@ -993,6 +998,30 @@ void *task_push_http_transfer_with_content(const char *url,
    if (content && content_len)
       net_http_connection_set_content(conn, content_type,
             content_len, content);
+
+   if (headers)
+      net_http_connection_set_headers(conn, headers);
+
+   return task_push_http_transfer_generic(conn, url, mute,
+         headers_accept_err, cb, user_data);
+}
+
+void *task_push_http_transfer_with_source(const char *url,
+      const char *method, net_http_source_t source,
+      net_http_source_rewind_t rewind, void *source_data, size_t len,
+      const char *content_type, bool mute, bool headers_accept_err,
+      const char *headers, retro_task_callback_t cb, void *user_data)
+{
+   struct http_connection_t *conn;
+
+   if (!url || !*url || !source)
+      return NULL;
+
+   if (!(conn = net_http_connection_new(url, method, NULL)))
+      return NULL;
+
+   net_http_connection_set_content_source(conn, content_type, len,
+         source, rewind, source_data);
 
    if (headers)
       net_http_connection_set_headers(conn, headers);

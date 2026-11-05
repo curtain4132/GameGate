@@ -101,6 +101,7 @@ SOURCES_C := \
 	$(CORE_DIR)/playlist.c \
 	$(CORE_DIR)/manual_content_scan.c \
 	$(CORE_DIR)/verbosity.c \
+	$(CORE_DIR)/samples/ui_companion_log_stub.c \
 	$(LIBRETRO_COMM_DIR)/formats/m3u/rm3u.c \
 	$(LIBRETRO_COMM_DIR)/formats/logiqx_dat/logiqx_dat.c \
 	$(CORE_DIR)/libretro-db/bintree.c \
@@ -249,8 +250,11 @@ $(INDEX_TEST)$(EXE_EXT): $(INDEX_TEST_OBJECTS)
 # count and refuse reader pushes, count queue worker starts, count an
 # archive's stored-CRC and directory reads, fail a chosen serial's
 # query, order the database and content lists, count reader passes,
-# hold chosen lookups, count an archive's member hits a step and hold
-# a chosen index build in one step.
+# hold chosen lookups, count an archive's member hits a step, hold
+# a chosen index build in one step, tell which thread the refresh
+# walks and playlist loads ran on, fail a chosen task_init, fail the
+# playlist folder walk, and count the file system calls the main
+# thread makes.
 SCAN_TEST_WRAPS := -Wl,--wrap=libretrodb_open -Wl,--wrap=task_queue_park \
 	-Wl,--wrap=intfstream_crc_step -Wl,--wrap=rm3u_is_m3u \
 	-Wl,--wrap=task_nbio_slice_open -Wl,--wrap=task_nbio_slice_close \
@@ -264,7 +268,12 @@ SCAN_TEST_WRAPS := -Wl,--wrap=libretrodb_open -Wl,--wrap=task_queue_park \
 	-Wl,--wrap=database_info_dir_init_from_list \
 	-Wl,--wrap=database_info_index_job_step \
 	-Wl,--wrap=task_nbio_slice_within_budget \
-	-Wl,--wrap=fill_pathname_join_delim
+	-Wl,--wrap=fill_pathname_join_delim \
+	-Wl,--wrap=dir_list_iter_new -Wl,--wrap=dir_list_iter_step \
+	-Wl,--wrap=playlist_parse_begin_header -Wl,--wrap=task_init \
+	-Wl,--wrap=path_stat -Wl,--wrap=path_is_valid \
+	-Wl,--wrap=path_is_directory -Wl,--wrap=path_get_size \
+	-Wl,--wrap=path_resolve_realpath
 ifeq ($(HAVE_THREADS), 1)
 SCAN_TEST_WRAPS += -Wl,--wrap=sthread_create
 endif
@@ -282,12 +291,19 @@ $(CLAIM_TEST)$(EXE_EXT): $(CLAIM_TEST_OBJECTS)
 # The scan test runs twice in one root: what a run leaves behind must
 # not decide the next one's checks. A sanitized build gives the budget
 # test its sanitizer's allowance, as CI does.
+# Each test gets a fresh root.  Under MSYS2 the tests are native Windows
+# programs, which cannot open the POSIX path mktemp gives: cygpath
+# turns it into C:/msys64/tmp/..., and where there is no cygpath the
+# path stays as it is.
+TEST_ROOT = root=$$(mktemp -d) && \
+	{ ! command -v cygpath >/dev/null 2>&1 || root=$$(cygpath -m "$$root"); }
 check: $(INDEX_TEST)$(EXE_EXT) $(SCAN_TEST)$(EXE_EXT) $(BEGIN_TEST)$(EXE_EXT) \
 	$(CLAIM_TEST)$(EXE_EXT)
-	./$(INDEX_TEST)$(EXE_EXT)
-	root=$$(mktemp -d) && ./$(CLAIM_TEST)$(EXE_EXT) "$$root"; r=$$?; \
+	$(TEST_ROOT) && ./$(INDEX_TEST)$(EXE_EXT) "$$root"; r=$$?; \
 	   rm -rf "$$root"; exit $$r
-	root=$$(mktemp -d) && ./$(SCAN_TEST)$(EXE_EXT) "$$root" \
+	$(TEST_ROOT) && ./$(CLAIM_TEST)$(EXE_EXT) "$$root"; r=$$?; \
+	   rm -rf "$$root"; exit $$r
+	$(TEST_ROOT) && ./$(SCAN_TEST)$(EXE_EXT) "$$root" \
 	   && ./$(SCAN_TEST)$(EXE_EXT) "$$root"; r=$$?; rm -rf "$$root"; exit $$r
 	./$(BEGIN_TEST)$(EXE_EXT) $(if $(SANITIZER),sanitize)
 

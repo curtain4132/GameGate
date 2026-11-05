@@ -910,7 +910,13 @@ static uint8_t *content_file_pump_source(data_transfer_t *dt,
    size_t          total  = 0;
 
    if (ps)
+   {
+      /* The transfer's buffer is one allocation that never moves, and
+       * stays alive, detached as the content, until the patch is
+       * finished: the patch reads the source there, not from a copy */
       base = data_transfer_ptr(dt, &total);
+      patch_stream_set_source(ps, base);
+   }
 #else
    (void)patch_stream;
 #endif
@@ -1152,16 +1158,14 @@ static size_t content_file_load_into_memory(
     * when an applier rejects a patch. */
    if (patch_ps)
    {
-      uint8_t *patched = NULL;
-      size_t   patched_len = 0;
+      size_t patched_len = (size_t)content_size;
 
+      /* The source was fed from content_data itself: an IPS patch goes
+       * on it where it lies, any other replaces it */
       if (      content_data
-            &&  patch_stream_finish((patch_stream_t*)patch_ps,
-                     &patched, &patched_len)
-            &&  patched)
+            &&  patch_stream_finish_into((patch_stream_t*)patch_ps,
+                     &content_data, &patched_len))
       {
-         free(content_data);
-         content_data = patched;
          content_size = (int64_t)patched_len;
          streamed     = true;
 

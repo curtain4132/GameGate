@@ -348,6 +348,27 @@ static void lane_line_separation(void)
          "worker_running and deferred_head share line %u",
          (unsigned)LINE_OF(deferred_head));
 
+   /* What the main thread writes every push - its clock, display
+    * pacing's averages and schedule, the handoff counts and what it
+    * publishes - against what the video thread writes every frame. */
+   CHECK(LINE_OF(core_time) != LINE_OF(miss_run)
+         && LINE_OF(core_time) != LINE_OF(drain_cooldown)
+         && LINE_OF(core_time) != LINE_OF(drain_pending),
+         "core_time shares line %u with the video thread's miss counts",
+         (unsigned)LINE_OF(core_time));
+   CHECK(LINE_OF(last_time) != LINE_OF(lend),
+         "last_time and the lent slots share line %u",
+         (unsigned)LINE_OF(last_time));
+   CHECK(LINE_OF(handoff.last) != LINE_OF(repeat_request)
+         && LINE_OF(handoff.last) != LINE_OF(repeat_group),
+         "the handoff counts share line %u with the repeat request",
+         (unsigned)LINE_OF(handoff.last));
+   CHECK(LINE_OF(content_period_us) != LINE_OF(margin_extra_us)
+         && LINE_OF(core_time_us) != LINE_OF(repeat_request)
+         && LINE_OF(core_time_us) != LINE_OF(handoff.last),
+         "the published pacing values share line %u",
+         (unsigned)LINE_OF(core_time_us));
+
    /* The deferred ring's producer and consumer indices. */
    CHECK(LINE_OF(deferred_head) != LINE_OF(deferred_tail),
          "deferred_head and deferred_tail share line %u",
@@ -6704,6 +6725,35 @@ static void lane_pacing_flag_follows_wrapper(void)
       fprintf(stderr, "[pass] pacing-flag lane\n");
 }
 
+#if defined(HAVE_OPENGL) && defined(HAVE_GLSL)
+/* gl2 reports views from its init as its frames do: a frame laid out
+ * before its first draw took views and windows for gone */
+static void lane_gl2_views_from_init(void)
+{
+   unsigned had = failures;
+   gfx_ctx_flags_t flags;
+   bool at_init;
+
+   set_threaded_via_setting(false);
+   run_frames(2);
+   expect_wrapper(false, "gl2 views lane");
+   video_driver_reinit(DRIVER_VIDEO_MASK | DRIVER_INPUT_MASK);
+   flags.flags = 0;
+   video_context_driver_get_flags(&flags);
+   at_init     = BIT32_GET(flags.flags, GFX_CTX_FLAGS_VIDEO_VIEWS) != 0;
+   run_frames(2);
+   flags.flags = 0;
+   video_context_driver_get_flags(&flags);
+   CHECK(at_init == (BIT32_GET(flags.flags, GFX_CTX_FLAGS_VIDEO_VIEWS) != 0),
+         "gl2 views lane: views %d from init, %d after a frame",
+         at_init ? 1 : 0,
+         (int)BIT32_GET(flags.flags, GFX_CTX_FLAGS_VIDEO_VIEWS));
+
+   if (failures == had)
+      fprintf(stderr, "[pass] gl2 views-from-init lane\n");
+}
+#endif
+
 /* ------------------------------------------------------------------ */
 /* Lane: zero-copy with the ring full                                  */
 /*   A driver whose present blocks for longer than a display period -  */
@@ -12134,6 +12184,10 @@ int main(int argc, char *argv[])
 #if defined(HAVE_OPENGL) && defined(HAVE_GL_TEXTURE_LEND)
    if (real_driver() && !strcmp(getenv("HARNESS_VIDEO_DRIVER"), "gl"))
       lane_gl2_linear();
+#endif
+#if defined(HAVE_OPENGL) && defined(HAVE_GLSL)
+   if (real_driver() && !strcmp(getenv("HARNESS_VIDEO_DRIVER"), "gl"))
+      lane_gl2_views_from_init();
 #endif
    if (real_driver())
       lane_surface_4k();

@@ -2136,6 +2136,19 @@ static char *video_driver_gpu_name_setting(enum gfx_ctx_api api)
    return NULL;
 }
 
+void video_driver_gpu_index_select(enum gfx_ctx_api api, int index)
+{
+   char *saved = video_driver_gpu_name_setting(api);
+   struct string_list *list = video_driver_get_gpu_api_devices(api);
+
+   /* Past the list names no device; the saved one is still followed */
+   if (!saved || (index > 0 && (!list || (size_t)index >= list->size)))
+      return;
+   strlcpy(saved, index > 0 ? list->elems[index].data : "",
+         NAME_MAX_LENGTH);
+   config_get_ptr()->flags |= SETTINGS_FLG_MODIFIED;
+}
+
 int video_driver_gpu_index_resolve(enum gfx_ctx_api api, int index,
       struct string_list *list)
 {
@@ -3617,6 +3630,10 @@ void video_driver_init_filter(enum retro_pixel_format colfmt_int,
  * still be holding it: see video_driver_hw_render_interface_kept(). */
 static const struct retro_hw_render_interface *video_hw_render_iface_held;
 
+/* See video_driver_hw_context_shared_note(): -1 until a GL driver
+ * reports one, and again once the core's context is destroyed. */
+static int video_hw_context_shared = -1;
+
 void video_driver_free_hw_context(void)
 {
    video_driver_state_t *video_st       = &video_driver_st;
@@ -3654,6 +3671,8 @@ void video_driver_free_hw_context(void)
    video_driver_invalidate_hw_render_cache();
    /* the core holds no interface of ours any more */
    video_hw_render_iface_held = NULL;
+   /* nor renders in a context of ours */
+   video_hw_context_shared    = -1;
 
    memset(&video_st->hw_render, 0, sizeof(video_st->hw_render));
    /* After the memset: an acquire reader that sees NONE is
@@ -4751,6 +4770,18 @@ bool video_driver_hw_render_interface_kept(void)
          || !video_st->poke->get_hw_render_interface(video_st->data, &iface))
       return false;
    return iface == video_hw_render_iface_held;
+}
+
+bool video_driver_hw_context_moved(int before, bool shared)
+{
+   return before != -1 && before != (shared ? 1 : 0);
+}
+
+void video_driver_hw_context_shared_note(bool shared)
+{
+   if (video_driver_hw_context_moved(video_hw_context_shared, shared))
+      video_driver_cache_context_ack_clear();
+   video_hw_context_shared = shared ? 1 : 0;
 }
 
 void video_driver_cache_context_ack_set(void)
@@ -8083,6 +8114,33 @@ void video_driver_vr_driver_changed(void)
 }
 #endif
 
+#if defined(ANDROID) && defined(HAVE_VULKAN) && defined(HAVE_OPENGL)
+/* Android: when the Vulkan driver will not start, switch to OpenGL ES
+ * in the same launch rather than exit.  A fresh install picks Vulkan
+ * from what the device declares, and a declared driver can still fail
+ * here; without this the app would close on every start, and a config
+ * that names Vulkan would keep it closing until the app's data is
+ * cleared.  Not for a core that renders with Vulkan itself: OpenGL ES
+ * cannot stand in for it.  The choice is saved at once, so the next
+ * start does not try Vulkan again. */
+static bool video_driver_android_gl_fallback(
+      video_driver_state_t *video_st, settings_t *settings)
+{
+   if (     video_st->current_video != &video_vulkan
+         || video_driver_is_hw_context())
+      return false;
+
+   RARCH_WARN("[Video] Vulkan driver failed to start, "
+         "falling back to \"gl\".\n");
+   configuration_set_string(settings, settings->arrays.video_driver, "gl");
+   video_st->current_video = &video_gl2;
+   /* As before the first attempt: whatever the Vulkan context said
+    * about the window does not carry over. */
+   input_driver_video_init_begin();
+   return true;
+}
+#endif
+
 bool video_driver_init_internal(bool *video_is_threaded, bool verbosity_enabled)
 {
    video_info_t video;
@@ -8352,6 +8410,18 @@ bool video_driver_init_internal(bool *video_is_threaded, bool verbosity_enabled)
             &video_st->data,
             video_st->current_video,
             video);
+#if defined(ANDROID) && defined(HAVE_VULKAN) && defined(HAVE_OPENGL)
+      /* A failed start puts back the driver and leaves no thread. */
+      if (!ret && video_driver_android_gl_fallback(video_st, settings))
+      {
+         if ((ret = video_init_thread(
+               (const video_driver_t**)&video_st->current_video,
+               &video_st->data,
+               video_st->current_video,
+               video)))
+            command_event(CMD_EVENT_MENU_SAVE_CURRENT_CONFIG, NULL);
+      }
+#endif
       if (!ret)
       {
 #ifdef HAVE_WAYLAND
@@ -8377,6 +8447,13 @@ bool video_driver_init_internal(bool *video_is_threaded, bool verbosity_enabled)
    /* Activation must not wait on the retained window's sleeping thread. */
    if (defer_unthreaded_init)
       video_st->data = video_st->current_video->init(&video);
+
+#if defined(ANDROID) && defined(HAVE_VULKAN) && defined(HAVE_OPENGL)
+   if (     !video_st->data
+         && video_driver_android_gl_fallback(video_st, settings)
+         && (video_st->data = video_st->current_video->init(&video)))
+      command_event(CMD_EVENT_MENU_SAVE_CURRENT_CONFIG, NULL);
+#endif
 
    if (!video_st->data)
    {

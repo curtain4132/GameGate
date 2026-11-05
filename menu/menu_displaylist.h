@@ -160,6 +160,7 @@ enum menu_displaylist_ctl_state
    DISPLAYLIST_RECORD_CONFIG_FILES,
    DISPLAYLIST_STREAM_CONFIG_FILES,
    DISPLAYLIST_RGUI_THEME_PRESETS,
+   DISPLAYLIST_VULKAN_DRIVERS,
    DISPLAYLIST_CONFIG_FILES,
    DISPLAYLIST_IMAGES,
    DISPLAYLIST_FONTS,
@@ -283,6 +284,7 @@ enum menu_displaylist_ctl_state
    DISPLAYLIST_BROWSE_URL_START,
    DISPLAYLIST_LOAD_CONTENT_LIST,
    DISPLAYLIST_LOAD_CONTENT_SPECIAL,
+   DISPLAYLIST_MANUAL_CONTENT_SCAN_DIR_LIST,
    DISPLAYLIST_INFORMATION_LIST,
    DISPLAYLIST_INFORMATION,
    DISPLAYLIST_CONTENT_SETTINGS,
@@ -419,6 +421,15 @@ bool menu_displaylist_build_smb_root(char *s, size_t len);
 #endif
 #ifdef HAVE_NFSCLIENT
 bool menu_displaylist_build_nfs_root(char *s, size_t len);
+/* Writes 'path' for a title with the configured export after the server,
+ * returning false when 'path' is not under the configured server or no
+ * export is set. */
+bool menu_displaylist_nfs_title_path(char *s, size_t len, const char *path);
+#endif
+#if defined(HAVE_NFSCLIENT) || defined(HAVE_SMBCLIENT)
+/* True when 'path' is the configured NFS or SMB root without the subdir;
+ * nothing above it can be browsed. */
+bool menu_displaylist_is_network_root(const char *path);
 #endif
 
 void filebrowser_clear_type(void);
