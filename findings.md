@@ -1,5 +1,14 @@
 # GameGate 开发发现
 
+## 2026-11-04 GG-002
+
+- 用户已确认静态JSON游戏源设计，A包实现者d662e539-9b3e-47fd-84e4-7b048e8ba820未交接前不重派写任务。
+- rjson支持严格UTF8、最大深度及事件式读取，A包复用不改共享库。
+- task_http.c已有流式sink及读取预算，但net_http.c:1746 TLS握手仍同步；不能把任务接口等同全程非阻塞。
+- net_http.h:70明确DNS缓存/连接池由单一驱动线程拥有，独立worker不可与已有任务并发共享net_http。
+- B包需解决有界接收、TLS/重定向、取消/代次；不能关闭证书验证。具体扩展仍在研究。
+- 研究子代理08243388-22aa-4ff5-898f-41e6754a086b发来早期发现；send_message对其ID报active teammate not found，list_agents仅lead。等待完成通知，不据消息工具错误判断子任务已经停止。
+
 ## 2026-11-02 第一批启动
 
 - 起始工作区干净，HEAD 为 9fa533cecd2ffddcfc4fa29fe07fea320577442f。

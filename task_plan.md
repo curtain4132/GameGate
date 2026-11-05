@@ -1,51 +1,51 @@
-# GameGate 第一批开发计划
+# GameGate 当前开发计划：GG-002 静态 JSON 游戏源
 
-## 当前状态
+## 已完成历史
 
-GG-001 首批原生游戏库已完成实现、主 Agent 独立验收和 Claude 最终复审。结论 APPROVE_WITH_NITS，无 P0/P1/P2 阻断问题。本批按用户授权在 feat/native-game-library 创建本地提交，具体提交标识以 Git 日志为准；不合并或推送。
+GG-001 原生游戏库已提交为 73100fda362b8622981daa2163cff1bc2d6a39cb，完成Codex实现/修复、主Agent验收、Claude复审。历史记录见 progress.md 和 docs/development/native-library-delivery.md。
 
-## 基线与范围
+## 目标与批准
 
-- 仓库：D:/Project/XJ/Game-Gate/Code_Source/GameGate。
-- 起始 HEAD：9fa533cecd2ffddcfc4fa29fe07fea320577442f，起始 tracked diff 为空。
-- 已确认：RetroArch 二开、GPL-3.0、仅 App 内运行、不使用 Rust。
-- 用户明确选择原生菜单方案；本批是已有集合和原生导入的游戏库导航页，不是全新界面或新存储引擎。
-- 保留上游参考目录，无新增上游通用全面验证，无远端操作。
+2026-11-04 用户确认 docs/superpowers/specs/2026-11-04-static-game-sources-design.md。完成源注册、HTTPS有界刷新、目录与详情、多语言、缓存、停用/移除。不是只做解析器；最终需交付菜单端到端流程。不实现游戏下载、核心安装和外部资料服务，不推送远端。
 
-## 阶段
+## 基线
 
-1. [完成] 两种真实子代理调用探测与只读接入分析。
-2. [完成] 用户确认首批方案，设计落盘。
-3. [完成] Codex 实现，主 Agent 独立构建、菜单和核心生命周期验收。
-4. [完成] Claude 首审，Codex 一轮指定小修，主 Agent 重跑扩充测试，Claude 最终复审。
-5. [完成] 两轮审查前后内容／SHA-256／diff／未跟踪路径核对，交付记录与限制保存。
+- 起始分支feat/native-game-library，HEAD 73100fda362b8622981daa2163cff1bc2d6a39cb。
+- tracked diff和暂存均为空；仅有主Agent新增的GG-002设计文档未跟踪。
+- 准备新分支feat/static-game-sources承接既有功能。
+- 保留业务源码、字体修复的便携产物和用户配置；不回退已有改动。
 
-## 验证结论
+## 串行阶段
 
-- Windows Release x64 构建及真实前端菜单 harness 通过，最终 0 failures。
-- 原 Playlists 导航、kiosk 非空集合、中文说明精确值及其他语言回退已补回归。
-- RGUI 中英文与德文回退、Ozone／XMB／MaterialUI 的入口和导入导航通过。
-- 从集合实际运行 2048 核心，二次确认关闭后 CONTENTLESS，返回条目页，后退回原集合。
-- 缺内容／缺核心不启动；未指定核心进入原生选择。
-- 新功能沿用原设置，关闭后是否退出尊重用户显式配置。
+1. [进行中] GG-002A：目录模型、严格JSON解析、验证、稳定身份和逐字段多语言回退；聚焦真实C测试。
+2. [待执行] A主Agent独立验收、Claude只读审查、必要修复闭环。
+3. [待执行] GG-002B：注册存储、有界HTTPS获取、取消/代次、缓存替换与失败保留。
+4. [待执行] B独立验收、Claude审查及必要修复。
+5. [待执行] GG-002C：原生源管理/目录/详情与中英文文案。
+6. [待执行] C独立验收、端到端真实交互、最终集成审查、更新交付说明。
 
-## 调度记录
+## 调度规则
 
-真实工具 functions.subagent_codex 实现与修复、functions.subagent_claude_code 首审与复审均已实际调用并完成；没有以普通 agent 冒充。调用 ID、错误、测试证据见 progress.md。
+已读取 codex-claude-review。真实工具 functions.subagent_codex 独占业务源码/测试实现和修复；functions.subagent_claude_code只读审查；主Agent负责文档、基线、独立验收和问题裁决。普通subagent只做只读研究。当前无GG-001遗留写者。
 
-修复轮次：1/2。选定 P3-1/3/4/5/6 已关闭。正式复审快照19文件、完整diff及未跟踪路径在主 Agent 最后核对时全部一致。
+任务链修复计数0/2，不能通过拆包重置。各包实际调用ID、写域和结果记录progress.md。
 
-## 保留事项
+A写域：新增gamegate/catalog.c/h、samples/gamegate/catalog/（构建脚本与C测试），必要的本包小范围编译接线需说明；禁止改菜单/核心/playlist/libretro-common、既有harness、配置凭据、主Agent文档。设计审查前不允许进入B或C。
 
-- Linux／MinGW／无线程及其他端没有可用验证环境，未声称通过。
-- P3-2 Make 命令解析仍有格式假设；待真实平台验证时改进，避免本轮无依据重写。
-- 新测试尚未接入 samples 自动发现或 CI；后续配置发布流水线时接入。
-- 测试失败路径的栈边界防护可完善，当前通过路径及产品代码不受影响，作为非阻断诊断改进延期。
-- 实际多 ROM 扫描、实体手柄／触控、音频、完整视觉与发行资源未验收。
-- 在线资源源、元数据、完整品牌／封面首页不属于本批实现。
+主Agent文档写域：task_plan.md/findings.md/progress.md、docs/superpowers/specs、docs/development交付记录。实现者不得修改。
 
-## 文档
+## 验证资源
 
-- 设计：docs/superpowers/specs/2026-11-02-native-library-design.md。
-- 交付与复现：docs/development/native-library-delivery.md。
-- 独立验收产物：artifacts/lead-acceptance（仅本地，不入库）。
+- Python：C:/Users/lenovo/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/python/python.exe。
+- VS2022 BuildTools MSBuild：C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/MSBuild/Current/Bin/MSBuild.exe，v143。
+- 产物：artifacts/static-sources/，主验收独立子目录lead/。
+- Linux/MinGW此前未安装；本轮检查后如仍无环境，明确未验证，不安装绕过。
+- tests必须执行真实parser/model行为；协议错误、UTF8、重复字段/ID、各类限额、URL、语言fallback等有可复现断言。
+- 网络传输必须在接收中限额，不能仅在全部读入后判断；超时、重定向、证书验证和退出取消必须有明确实现。
+- 无线程模式任务必须分片推进，不因接入HTTP任务接口就假定天然非阻塞。
+
+## 当前错误/阻碍
+
+GG-002A实现任务 d662e539-9b3e-47fd-84e4-7b048e8ba820 连续三个目标回合仍无完成/失败/已停止确认，catalog.c/h及测试目录尚不存在。当前工具未提供可查询或取消该外部实现任务的接口；job_list不包含它，不能将无列表记录当作已停止。另一个只读探测已成功，说明并非已证实的后端整体不可用，因此不能据此降级接管或重新分配同一写域。
+
+暂停受影响实现与后续依赖包，等待原任务的终态通知，或用户在子任务面板确认其已完成/已取消并停止后继续。具体依据：codex-claude-review要求重新分配写权限前确认旧写者结束。已有设计、实施计划和网络只读发现保留，未修改业务代码、提交或推送。便携字体视觉确认不属于此阻塞。
