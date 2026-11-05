@@ -241,6 +241,15 @@ ifeq ($(HAVE_RMP3), 1)
    OBJ += $(LIBRETRO_COMM_DIR)/formats/mp3/rmp3.o
 endif
 
+OBJ += gamegate/catalog.o \
+       gamegate/catalog_parse.o \
+       gamegate/source_http.o \
+       gamegate/source_http_win32.o \
+       gamegate/source_http_android.o \
+       gamegate/source_store_io.o \
+       gamegate/source_store.o \
+       gamegate/source_service.o
+
 OBJ += frontend/frontend_driver.o \
        retroarch.o \
        runloop.o \
@@ -1085,6 +1094,7 @@ ifeq ($(HAVE_MENU_COMMON), 1)
           menu/cbs/menu_cbs_label.o \
           menu/cbs/menu_cbs_sublabel.o \
           menu/cbs/menu_cbs_title.o \
+          menu/menu_gamegate_sources.o \
           menu/menu_displaylist.o \
           menu/menu_dirwalk.o \
           menu/menu_contentless_cores.o

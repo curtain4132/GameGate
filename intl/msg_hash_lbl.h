@@ -1,3 +1,55 @@
+MSG_HASH(
+   MENU_ENUM_LABEL_GAMEGATE_SOURCES,
+   "gamegate_sources"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_GG_SOURCE_DETAIL,
+   "gamegate_sources_detail"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_GG_SOURCE_GAMES,
+   "gamegate_sources_games"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_GG_SOURCE_GAME,
+   "gamegate_sources_game"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_GG_SOURCE_CONFIRM,
+   "gamegate_sources_confirm"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_GG_SOURCE_ADD,
+   "gamegate_sources_add"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_GG_SOURCE_REFRESH,
+   "gamegate_sources_refresh"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_GG_SOURCE_ENABLE,
+   "gamegate_sources_enable"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_GG_SOURCE_REMOVE,
+   "gamegate_sources_remove"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_GG_SOURCE_CANCEL,
+   "gamegate_sources_cancel"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_GG_SOURCE_BACK,
+   "gamegate_sources_back"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_GG_SOURCE_RETRY,
+   "gamegate_sources_retry"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_GG_SOURCE_TEXT,
+   "gamegate_sources_text"
+   )
 
 
 MSG_HASH(

@@ -13,6 +13,7 @@
  *  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "../menu_gamegate_sources.h"
 #include <compat/strl.h>
 #include <file/file_path.h>
 #include <string/stdstring.h>
@@ -110,6 +111,13 @@ int menu_cbs_init_bind_label(menu_file_list_cbs_t *cbs,
 
    if (cbs->enum_idx == MSG_UNKNOWN)
       return 0;
+
+   if (menu_gamegate_sources_page(label)
+         && cbs->enum_idx != MENU_ENUM_LABEL_GAMEGATE_SOURCES)
+   {
+      BIND_ACTION_LABEL(cbs, menu_gamegate_sources_label);
+      return 0;
+   }
 
    switch (cbs->enum_idx)
    {

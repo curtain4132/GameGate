@@ -1,5 +1,51 @@
 # GameGate 开发进度
 
+## 2026-11-04 隔离续作 GG-002
+
+- 用户明确同意独立目录继续，create_worktree已建立 .agents/worktrees/feat/static-sources-isolated，分支feat/static-sources-isolated，基线73100fda362b8622981daa2163cff1bc2d6a39cb。
+- 旧写任务d662e539-9b3e-47fd-84e4-7b048e8ba820原目录写权不变，不声称已停止；新任务绝对禁止原目录写入。重新整合须另查原工作区状态。
+- 复制已批准GG-002设计及实施计划到新checkout，初始业务diff为空；现只有主Agent规划/文档修改。
+- GG-002A1：functions.subagent_codex实现模型/URL/语言回退及测试；实际调用ID e4594b10-94c1-427f-bf13-5e0f3151ad91，已启动待交接。范围仅本checkout gamegate/catalog.c/h和samples/gamegate/catalog/；禁止提交和切分支、写原路径、安装依赖、修改文档。
+- 先小任务交接并验收/审查，再A2解析器；B和C仍须最终完成。全链修复0/2。
+- A1任务e4594b10-94c1-427f-bf13-5e0f3151ad91已停止写入并交接4个新文件，模型代码真实落盘。build.py运行到cl.exe查找时报WinError2，尚未编译测试。
+- docs/sources/static-json-v1.md由主Agent在已约定文档写域编写，其出现属于预期并行工作；新任务不应将该变化误判为其他写者越界。
+- 主Agent确认MSVC编译器实际存在：C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe。修复包只处理构建器环境/可执行路径与必要编译诊断，禁止扩产品范围，计入GG-002修复1/2。
+- 修复者functions.subagent_codex，ID631cb325-631a-4d00-b2cf-a9881f4588f5，已停止写入并报告测试通过。主Agent随后实际独立运行Python -B samples/gamegate/catalog/build.py，退出0，输出catalog model tests passed，证据artifacts/static-sources/lead/a1-tests.utf8.log。源码、模型测试未被修复包改写，只有build.py更新环境查找。
+- GG-002A1-REVIEW：functions.subagent_claude_code，ID cc1b1547-62b4-448a-a657-3349d633b9ae，已完成APPROVE_WITH_NITS，无P0/P1/P2；主Agent核对7文件哈希及untracked路径不变。
+- A1 P3裁决：UI语言到BCP47映射在C包实施，不改变本包精确语言匹配契约；%XX路径不解码或转换本地路径，字面控制字节已拒绝，编码控制字符由后续请求构造保持原样，不把保留编码错误视为已验证注入；构建器仅本机BuildTools x64已验收，其余平台工具链适配延后。未把P3注册为本轮修复。
+- GG-002A2：Codex d4b3384a-29f1-4901-b37f-f520dd3c585e 已实现并停止写入，新增catalog_parse.c/parser_test.c，扩展模型及build.py。主Agent已完整读取parser与测试并独立编译执行，exit0，model passed、parser491cases passed；日志artifacts/static-sources/lead/a2-tests.utf8.log。编译辅助进程保持输出句柄，shell已明确输出LEAD_A2_EXIT=0后关闭wrapper，不把wrapper取消状态当作测试exit0。全链修复仍1/2。
+- GG-002A2-REVIEW：functions.subagent_claude_code，IDa0ae9d4b-8ff0-423d-b774-7b5d2a96f515，已完成APPROVE_WITH_NITS无P0/P1/P2；主Agent核对9个冻结文件hash一致。
+- A2 P3裁决：region/version128字节是主Agent实现包约束，设计文本未写清，作为协议文档待明确项保留；空串和NULL展示时均按无资料处理，不立即改模型；解析创建/销毁/错误free是总量有界但非分片，B集成不得在菜单帧同步批量执行。当前不选择对A2代码追加修复，全链仍1/2。
+- GG-002B1：开始独立HTTPS传输后端（Windows异步WinHTTP、Android纯Java工作对象及JNI轮询桥接）。源缓存/注册和菜单后续单独接线，避免大任务。允许本checkout新增gamegate/source_http*.c/h、Android共享Java helper及Activity小入口、samples/gamegate/source_http/。禁止改共享HTTP/TLS、parser、用户配置或原目录。真实Codex调用 e527a31e-d8b8-4661-bf88-76cfeb88d356 已完成并停止写入；主Agent实际独立重跑Windows与Java构建/测试均exit0，日志artifacts/static-sources/lead/b1-windows.utf8.log及b1-java.utf8.log；Android NDK/SDK编译未验收。
+- B1正式Claude审查 d9353949-627f-49e8-8b99-26651eaf6148 REQUEST_CHANGES，4项P2：WinHTTP异步参数、Java Inflater所有权、Java尾段dot路径、离线测试依赖本机fixture。主Agent核对17个受审文件SHA256不变。
+- FIX-2（全链2/2）选择修复全部4项P2，并选P3取消后owner清理、start/poll所有权契约、限定合法重定向状态；主Agent静态发现C resolver在无path基址补斜杠时需重新检查合并长度，要求修复边界并加回归。未证实可利用性，不宣称动态越界复现成功（先前隔离调用只输出VALIDATION_RESULT False）。
+- P3 JNI极端VM关闭诊断、Win7兼容和其他工具链路径暂留限制；Windows deflate失败仅对应所测服务编码，不能将raw/zlib不同封装混为统一不支持。主Agent不会修改业务代码，由Codex修复并独立再验收/Claude复审。
+- 用户截图曾出现模型提供方cyber_policy拒绝；未将其算作项目编译失败或某子任务完成证据，未重新触发被拒诊断。正式Claude报告已实际返回。
+- FIX-2作者0971f5e6-a5de-4947-af0a-bfd190aaf8ae已停止写入，主Agent读完fix2.patch核对生产/测试变化并重跑：--offline exit0（owner37，本地TLS72/offline68，stub3）；live exit0（118通过0失败2跳过）；Java exit0（136通过无跳过）。独立日志artifacts/static-sources/lead/b1-fix2-*.utf8.log。
+- B1复审 functions.subagent_claude_code ID e26d4015-c81b-4a51-9db8-87525dd279d7 已完成APPROVE_WITH_NITS，无P0/P1/P2，选定P2/P3修复已关闭；主Agent核对19文件哈希一致。剩余owner harness非Windows链接/测试常量及环境未验证为延期非阻断项。修复计数2/2，未重置。
+- GG-002B2a：Codex283dbc69-9943-4364-9913-35745f263855完成且停止写入。主Agent独立MSVC真实VFS测试exit0、2034断言通过。Claude252f84db-9a69-4d29-834e-e649c20f081d APPROVE_WITH_NITS，无P0/P1/P2；12文件哈希核对通过。保留OOM错误分类及特殊VFS errno语义为P3限制，不选新修复。
+- GG-002B2b：拟由Codex实现source_service.c/h、独立串行worker与UI快照、HTTP完成数据所有权移交、取消代次/关闭；允许必要的source_http*.c/h新增take_data接口及对应测试，禁止改store/parser/菜单/文档。输出samples/gamegate/source_service/真实回归；只在本checkout。调用ID fbc1d0e9-1e0e-407d-992a-8573c1d19095已完成并停止写入；主Agent读取完整service与HTTP扩展、线程测试，独立运行build.py --network退出0：11无线程断言、402确定性断言、真实HTTPS添加/保存/重开/浏览PASS（网络套件714断言）。证据artifacts/static-sources/lead/b2b-service.utf8.log；全链修复仍2/2。
+- B2b-REVIEW：Claude cee1c432-a523-403c-a927-2cb7663a8b29 APPROVE_WITH_NITS，无P0/P1；主Agent核对23文件哈希一致。P2初始化cancel使实例NOT_READY属真实API限制，决定延期，不标关闭：当前尚无生产调用方，C包只在FETCH/APPLY/LOADING提供普通取消，INITIALIZING离开页面不cancel，退出直接free；通过新菜单有效调用约束避免触发。保留P3提交后load失败、唯一catalog_id、FETCH缓存复用、Android DONE一次JNI复制等边界。
+- GG-002C开始：Codex独占原生菜单/控制器、MAIN_THREAD poll任务、i18n/label生成、Makefile/Griffin及必要Unity编译适配和真实菜单测试；禁止改变service/store业务契约或重置修复计数。所有源页面按localID/gameID查找，反复检查kiosk；不实现游戏下载/核心安装。完整Windows构建与MENU交互验收必须做，Android未具NDK不宣称通过。调用ID b27c6404-e776-40f7-befe-826acc92ffb4未完成交接；2026-11-05读取Win32_OperatingSystem确认主机09:00:14+08:00重启，旧本地执行进程已终止，可在保留改动后继续该未完成首次实现包。
+
+
+- B2b预研：task_queue.h:176提供RETRO_TASK_FLG_MAIN_THREAD，可保证前端线程驱动request owner，即使全局threaded tasks开启也不换到worker；store/parse仍需专门后台工作单元，避免大对象create/error/destroy阻塞菜单。
+
+
+
+
+
+- 独立只读WinHTTP研究：functions.subagent ID e25c2537-8d84-4ee5-b9d2-cadcb3699371，已完成报告。原生异步回调无固定线程且可能重入，不能callback中递归ReadData；owner分帧推进，callback仅发布事件；HANDLE_CLOSING是释放context的屏障。运行时threaded tasks关闭与编译HAVE_THREADS=0要分别处理，后者不可直接使用伪原子变量跨线程。
+- 用户明确拒绝Windows-only后端交付，随后选择本轮Windows和Android，同时要求记录其他平台后续补齐。已更新设计平台段：Linux/macOS/iOS/iPadOS/原生鸿蒙在线传输后续适配，不算本轮已支持。
+- 环境核查：ANDROID_HOME/SDK_ROOT/NDK_HOME均未设置，常见LocalAppData Android/Sdk不存在，PATH无adb/gradle；发现JDK21 C:/Program Files/Java/jdk-21.0.4+7/bin/javac.exe。可用纯Java编译/网络测试，不等于Android APK/实机验证。
+- Android现代phoenix工程compileSdk36、NDK29.0.14206865、minSdk21，Java sourceSets含phoenix-common/src；Java请求helper可独立于Activity编写，再通过现有JNI桥接。仍未实现B，不声称已支持。
+
+
+
+
+
+
+
 ## 2026-11-02 第一批任务启动
 
 - 用户要求开始任务。
@@ -47,3 +93,37 @@
 - 主 Agent 已在 artifacts/lead-acceptance 准备英文有集合、中文空库、德文回退、kiosk 四组独立配置及测试数据，不写实现者源码或产物目录。
 - stdin MENU 接口试验可读取真实菜单和导航；独立配置关闭二次退出后 QUIT 正常返回0。此为验收通道准备，不是新功能验收。
 - 子代理使用完成通知接收结果；job_output 不管理 subagent UUID，曾返回 unknown job，后续不以此查询子代理。
+
+## 2026-11-05 C包中断恢复
+
+- 当前自动目标第4/18轮，保持active。源代码最近写入2026-11-04 20:55；最后RGUI自测在中文标题断言处失败，未收到实现完成报告。
+- 已保存56个修改/新增文件的内容与SHA256、tracked/staged diff及untracked列表至artifacts/static-sources/c-resume-baseline，保留所有现有实现。主机重启是旧本地进程终止证据，不把无job列表或文件静止当完成证据。
+- 主Agent真实对照复现同一已有exe、language=12：无资源时English Game Sources=true/中文false；提供4个已有RGUI位图字体后中文true/English false。使用独立lead/c-language-check配置与复制资产，未改生产代码或父目录。
+- samples/menu/gamegate_sources/build.py使用menu_config_directory，configuration.c:2250实际键为rgui_config_directory；测试fixture未生效导致源缓存落到测试exe的bin/config。接续须修正夹具隔离，不覆盖/清理原工作区或旧证据。
+- 本次为重启中断后的C首次实现接续，不把它伪报为已验收包；全链既有修复计数仍2/2，不重置，A/B代码及延期API限制保护不变。
+
+- C首次实现接续真实调用functions.subagent_codex，ID9888faf4-0f21-46e0-86d1-a50954a214f9，已启动；写域沿用原C，不改A/B行为。要求最终源码重建、字体有效的中文/RGUI/Ozone及原库回归，再交接。
+
+## 2026-11-05 C独立验收及最终审查
+
+- C接续9888faf4-0f21-46e0-86d1-a50954a214f9正式停止写入并交接，完整diff已读；接续只改4个C范围内源码/测试文件，其余已有改动保留。
+- 主Agent全新lead/frontend/bin与obj完整Release x64构建，实际MSBuild exit0；随后以该exe独立跑RGUI/Ozone/XMB/glui，每驱动7进程共28次完整MENU+生命周期路径，所有进程退出0。证据review-final/lead-acceptance.json、lead/menu-acceptance各driver日志/菜单逐条记录。
+- 主Agent重跑旧游戏库harness（实现者编译的harness exe）0 failures；intl_conversion、sublabel selftest、packed/format selftest与全表均0；gen_lbl_str内容SHA256不变，diff check通过。未重做核心加载专项，未验证AndroidNDK/实机、Linux/MinGW。
+- ci_local selftest常规调用确实失败：WSL无发行版导致fixture首echo exit1；GitBash明确路径诊断此前60s超时，原CI代码未修改，保留失败限制。
+- 最终实际Claude工具调用01a2b2fb-0ff5-469b-a499-8c7e5993be02进行中，56个业务/测试/设计/交付文档文件冻结于artifacts/static-sources/review-final。docs/development/static-sources-delivery.md与源参考已整合并纳入审查。审查期间只更新行政文档。无提交/推送，目标尚未标complete。
+
+- CI自测补充：job win-bash-c6e5be4b181d440b已完成。使用内存wrapper仅将subprocess参数bash换为C:/Program Files/Git/bin/bash.exe，并把该子进程env键统一大写；未改ci_local.py/工作流/系统PATH。真实cmd_selftest完整执行输出101 workflows, ok及CI_EXPLICIT_EXIT 0。此前普通调用WSL失败和60s诊断超时仍保留；本次不是跳过断言/fixture，也不代表执行所有CI job。PyYAML缺失比较仍跳过。最终审查窗口不改已冻结交付文档，待报告后同步这条新证据。
+
+## 最终裁决与文档复核
+
+- 最终集成Claude01a2b2fb-0ff5-469b-a499-8c7e5993be02返回APPROVE_WITH_NITS，无P0/P1，不阻断Windows试用；主Agent核对56文件SHA256一致。
+- 主Agent接受最近错误未持久化为本批P2实现偏差，保留设计原要求和后续补齐事项，不称用户已豁免。初始化cancel API P2也保留，菜单规避已验证不等于API修复。P3文本行选择跳动/全局错误归因/unsupported提示/输入启动失败及NOMEM反馈/注释归属列明延期；不启第三轮代码修复。
+- Windows便携预览只复用已验收exe及既有本地assets/licenses/config，追加有效rgui_config_directory，无新业务代码。复制到独立路径启动中文Ozone空态、正常QUIT exit0；zip11883844bytes，SHA256 4becdf576d8775bd275cf693b3174b0caaf623581bbd4ada138a7f2537bdea58，152文件，无用户或测试registry，无ROM/BIOS/core；包属于本地预览非正式发布。
+- 三份文档同步最终结论/CI新增证据/预览入口/偏差；其余代码及受审文件hash不变。新快照review-final-docs，Claude只读文档复核db28b4a6-7199-4268-b8a3-60521e82c21b进行中。无提交推送，旧原工作区未覆盖。
+
+## GG-002本轮收尾
+
+- 最终文档Claude复核db28b4a6-7199-4268-b8a3-60521e82c21b APPROVE，无阻断；主Agent再次核对3份最终文档及其余53份代码/测试/上下文hash一致，暂存区为空。
+- 本轮功能开发及Windows试用验收收尾；Windows完整交互、分层真实测试、最终代码与文档审查闭环完成。Android仅Java桌面验证和JNI静态接线，原生构建/设备验收未完成；其他平台在线能力后续适配。
+- 保留两项P2：最近错误未持久化的实现偏差、初始化cancel API限制（菜单已避免调用）；P3与测试缺口见最终交付说明。不称零缺陷或全平台通过。
+- 预览包已提供，源码仅隔离工作树，未提交/推送/合入原工作树；无测试应用遗留。所有实际工具ID及验收证据见上述记录。

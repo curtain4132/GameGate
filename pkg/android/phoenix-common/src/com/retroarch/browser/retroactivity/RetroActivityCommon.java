@@ -98,6 +98,13 @@ public class RetroActivityCommon extends NativeActivity
   public static final int RETRO_RUMBLE_STRONG = 0;
   public static final int RETRO_RUMBLE_WEAK = 1;
   public static final int REQUEST_CODE_OPEN_DOCUMENT_TREE = 0;
+
+  public static GameGateSourceRequest createGameGateSourceRequest(
+      String url, long timeoutMillis)
+  {
+    return GameGateSourceRequest.start(url, timeoutMillis);
+  }
+
   /* Startup permission flow; distinct from the in-session all-files
    * re-ask loop on requestCode 124, which restarts the app on grant. */
   private static final int REQUEST_CODE_STARTUP_PERMISSIONS = 126;

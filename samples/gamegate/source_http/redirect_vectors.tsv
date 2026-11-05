@@ -1,0 +1,14 @@
+https://example.org/a/b.json	.	https://example.org/a/
+https://example.org/a/b/c.json	..	https://example.org/a/
+https://example.org/a/b.json	./	https://example.org/a/
+https://example.org/a/b/c.json	../	https://example.org/a/
+https://example.org/x.json	/a/.	https://example.org/a/
+https://example.org/x.json	/a/b/..	https://example.org/a/
+https://example.org/a/b.json?old=1	?new=a%2Fb	https://example.org/a/b.json?new=a%2Fb
+https://example.org	?new=1	https://example.org/?new=1
+https://example.org/a//b/c.json	../.	https://example.org/a//
+https://example.org/a/b.json	/x//y///z	https://example.org/x//y///z
+https://example.org/a/b.json	%2e/%2E%2e/c	https://example.org/a/%2e/%2E%2e/c
+https://example.org/a/b.json	/../../.	https://example.org/
+https://example.org/a/b.json	/a//../b/.	https://example.org/a/b/
+https://example.org/a/b.json	./?q=%2e	https://example.org/a/?q=%2e

@@ -1,3 +1,291 @@
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GAMEGATE_SOURCES,
+   "Game Sources"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_DETAIL,
+   "Source Details"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_GAMES,
+   "Browse Cached Games"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_GAME,
+   "Game Details"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_CONFIRM,
+   "Remove Source..."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_ADD,
+   "Add HTTPS Source"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_REFRESH,
+   "Refresh Catalog"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_ENABLE,
+   "Enable Source"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_REMOVE,
+   "Confirm Removal"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_CANCEL,
+   "Cancel Operation"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_BACK,
+   "Cancel Removal"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_RETRY,
+   "Retry Reading Cache"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_TEXT,
+   "Source Information"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_WORKING,
+   "Request accepted; waiting for completion"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_BUSY,
+   "Busy; this request was not accepted. Try again after completion."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_INVALID_URL,
+   "Invalid URL. Enter an absolute HTTPS address."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_UNSUPPORTED,
+   "Online sources are unsupported on this platform/build; cached browsing only."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_NOT_READY,
+   "Not ready; please wait for initialization."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_MISSING,
+   "Source no longer exists"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_DISABLED,
+   "Disabled"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_ENABLED,
+   "Enabled"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_DUPLICATE,
+   "This URL has already been added"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_FULL,
+   "Source limit reached (32)"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_TOO_LATE,
+   "Saving has begun; cancellation is too late. Wait for completion."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_CANCELLED,
+   "Operation cancelled"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_FAILED,
+   "Operation failed; see the reason"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_TLS,
+   "Secure connection failed; certificate verification remains enabled."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_TIMEOUT,
+   "Network request timed out"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_LIMIT,
+   "Catalog exceeds the supported size or entry limits"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_NETWORK,
+   "Network or HTTP request failed; existing cache is retained."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_INVALID_CATALOG,
+   "Invalid catalog or damaged registry/cache; existing files were not replaced."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_IDENTITY,
+   "Source identity changed; existing cache is retained."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_STORAGE,
+   "Unable to read or write the source storage"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_SAVED_LOAD_FAILED,
+   "Saved, but catalog loading failed. Retry reading the cache."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_COMPLETE,
+   "Operation completed"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_KIOSK,
+   "Management is unavailable in kiosk mode"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_UNKNOWN,
+   "Not provided"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_UNKNOWN_PLATFORM,
+   "Unrecognized platform (support unknown)"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_INITIALIZING,
+   "Initializing source storage..."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_FETCHING,
+   "Updating; existing cache remains available"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_APPLYING,
+   "Validating and saving..."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_LOADING,
+   "Reading cached catalog..."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_CACHED,
+   "Ready / cached catalog"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_EMPTY_GAMES,
+   "This catalog contains no games"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_NAME,
+   "Name"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_ORIGINAL_NAME,
+   "Original Name"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_DESCRIPTION,
+   "Description"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_NO_DESCRIPTION,
+   "No description available"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_NAME_LANGUAGE,
+   "Name Language"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_DESCRIPTION_LANGUAGE,
+   "Description Language"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_ORIGINAL_LANGUAGE,
+   "Original Language"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_PROVIDED_BY,
+   "Provided by Source"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_PLATFORM,
+   "Platform"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_PLATFORM_CODE,
+   "Platform Identifier"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_REGION,
+   "Region"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_VERSION,
+   "Version"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_BROWSE_ONLY,
+   "Catalog browsing only; downloading is not available in this version."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_NO_DOWNLOAD,
+   "No download address provided"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_DOWNLOAD_URL,
+   "Download Address (information only)"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_SIZE,
+   "Size in Bytes"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_EXTERNAL_ID,
+   "External Reference"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_COVER_URL,
+   "Cover Address (not fetched)"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_REMOVE_QUESTION,
+   "Remove this source and its cache? Local games are not affected"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_STATE,
+   "Enabled State"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_DISABLE,
+   "Disable Source"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_LAST_SUCCESS,
+   "Last Successful Update"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_LAST_ERROR,
+   "Failure Reason"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_HOMEPAGE,
+   "Source Homepage"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_EMPTY_KIOSK,
+   "No enabled cached sources"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_EMPTY,
+   "No sources yet. Choose Add HTTPS Source and enter a catalog URL."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_GG_SOURCE_STATUS,
+   "Status"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_GAMEGATE_SOURCES,
+   "Browse and manage HTTPS game catalogs. No downloads or core installation."
+   )
 #if defined(_MSC_VER) && !defined(_XBOX) && (_MSC_VER >= 1500 && _MSC_VER < 1900)
 #if (_MSC_VER >= 1700)
 /* https://support.microsoft.com/en-us/kb/980263 */

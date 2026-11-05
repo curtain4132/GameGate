@@ -89,6 +89,16 @@
 
 #include "../verbosity.c"
 
+#include "../gamegate/catalog.c"
+#include "../gamegate/catalog_parse.c"
+#include "../gamegate/source_http.c"
+#include "../gamegate/source_http_win32.c"
+#include "../gamegate/source_http_android.c"
+#include "../gamegate/source_store_io.c"
+#include "../gamegate/source_store.c"
+#include "../gamegate/source_service.c"
+
+
 #if defined(HAVE_LOGGER) && !defined(ANDROID)
 #include "../network/net_logger.c"
 #endif
@@ -1913,6 +1923,7 @@ MENU
 #include "../menu/cbs/menu_cbs_get_value.c"
 #include "../menu/cbs/menu_cbs_label.c"
 #include "../menu/cbs/menu_cbs_sublabel.c"
+#include "../menu/menu_gamegate_sources.c"
 #include "../menu/menu_displaylist.c"
 #include "../menu/menu_dirwalk.c"
 #include "../menu/menu_contentless_cores.c"

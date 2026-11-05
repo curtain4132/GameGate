@@ -1,5 +1,16 @@
 # GameGate 开发发现
 
+## 2026-11-04 GG-002菜单接线（研究d151429f-ba13-40eb-97ec-936e951d4c55已完成）
+
+- 页面需覆盖displaylist、ok/deferred/title/sublabel/label、消息枚举/label生成及GameGate简中自有源，不能只新增displaylist case。
+- menu_entries_append的path应携localID或localID/gameID，label携固定路由；entry_idx不是稳定身份。动态名称须action_label，不能只set_alt后假设MENU show能看到。
+- generic_action_ok_displaylist_push默认PUSH_DEFAULT会用label替换path，GG需专用push保留稳定ID。输入回调userdata是menu而非源上下文，先end输入再调业务。
+- 原confirm_set只支持msg和CMD_EVENT，不能携源上下文；源移除采用“取消/确认”子列表并以path保存localID，确认执行再次校验kiosk/存在性。
+- menu_driver.c刷新标志可能只在下次用户输入消费；异步源结果完成时需在该文件GG页面限定pump里调用现有static rebuild方法，按稳定ID恢复选中项。
+- UI语言简中/繁中映射zh-Hans/zh-Hant，pt_BR/pt_PT→pt-BR/pt-PT，英式en-GB，瓦伦西亚ca-ES-valencia；其余用get_user_language_iso639_1(true)。资料逐字段fallback仍由catalog模型完成。
+- 实际stdin命令是MENU show/open/a/b/type，不存在GET MENU。KEYBOARD后MENU type自动提交；每条等完整答复，不能连续覆盖pending。
+- MAIN_THREAD|MUTE原生task可让服务poll稳定在前端线程，不需改runloop；worker-only store需独立后台调度并发布只读快照。所有管理callback再次检查kiosk，kiosk只浏览已启用缓存。
+
 ## 2026-11-02 第一批启动
 
 - 起始工作区干净，HEAD 为 9fa533cecd2ffddcfc4fa29fe07fea320577442f。

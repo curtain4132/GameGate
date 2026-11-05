@@ -16,6 +16,7 @@
  *  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "menu_gamegate_sources.h"
 #include <memory/mem_stats.h>
 #include <stddef.h>
 #include <math.h>
@@ -17780,6 +17781,13 @@ static bool menu_displaylist_ctl_internal(
                         MENU_SETTING_ACTION, 0, 0, NULL))
                   count++;
 
+               if (menu_entries_append(info->list,
+                        msg_hash_to_str(MENU_ENUM_LABEL_VALUE_GAMEGATE_SOURCES),
+                        MENU_ENUM_LABEL_GAMEGATE_SOURCES_STR,
+                        MENU_ENUM_LABEL_GAMEGATE_SOURCES,
+                        MENU_SETTING_ACTION, 0, 0, NULL))
+                  count++;
+
                if (flags & RUNLOOP_FLAG_CORE_RUNNING)
                {
                   if (!retroarch_ctl(RARCH_CTL_IS_DUMMY_CORE, NULL))
@@ -18450,6 +18458,10 @@ static bool menu_displaylist_ctl_internal(
             }
             load_content       = false;
             use_filebrowser    = true;
+            break;
+         case DISPLAYLIST_GAMEGATE_SOURCES:
+            menu_gamegate_sources_build(info);
+            info->flags |= MD_FLAG_NEED_REFRESH | MD_FLAG_NEED_PUSH;
             break;
          case DISPLAYLIST_GAMEGATE_LIBRARY:
          case DISPLAYLIST_DATABASE_PLAYLISTS:

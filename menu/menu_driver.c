@@ -20,6 +20,7 @@
 #include "../config.h"
 #endif
 
+#include "menu_gamegate_sources.h"
 #include <retro_timers.h>
 #include <retro_math.h>
 #include <file/file_path.h>
@@ -9090,6 +9091,48 @@ int generic_menu_entry_action(
  *
  * Only a genuinely pending parse does any work here, so a menu with
  * nothing outstanding costs one predictable branch. */
+static void menu_driver_pump_gamegate_sources(struct menu_state *menu_st,
+      settings_t *settings)
+{
+   file_list_t *list;
+   file_list_t *stack;
+   size_t i;
+   char identity[MENU_GAMEGATE_SOURCE_ID_SIZE];
+   char route[64];
+   const char *page = NULL;
+   if (!menu_st->entries.list)
+      return;
+   list = MENU_LIST_GET_SELECTION(menu_st->entries.list, 0);
+   stack = MENU_LIST_GET(menu_st->entries.list, 0);
+   if (!list || !stack || !stack->size)
+      return;
+   page = stack->list[stack->size - 1].label;
+   if (!menu_gamegate_sources_page(page))
+      return;
+   identity[0] = route[0] = '\0';
+   if (menu_st->selection_ptr < list->size)
+   {
+      struct item_file *item = &list->list[menu_st->selection_ptr];
+      strlcpy(identity, item->path, sizeof(identity));
+      strlcpy(route, item->label, sizeof(route));
+   }
+   if (!menu_gamegate_sources_refresh())
+      return;
+   menu_driver_displaylist_push(menu_st, settings, list, stack);
+   for (i = 0; *route && i < list->size; i++)
+      if (!strcmp(identity, list->list[i].path)
+            && !strcmp(route, list->list[i].label))
+      {
+         menu_st->selection_ptr = i;
+         break;
+      }
+   if (menu_st->selection_ptr >= list->size)
+      menu_st->selection_ptr = 0;
+   if (menu_st->driver_ctx->navigation_set)
+      menu_st->driver_ctx->navigation_set(menu_st->userdata, false);
+   menu_st->flags &= ~MENU_ST_FLAG_ENTRIES_NEED_REFRESH;
+}
+
 static void menu_driver_pump_pending(struct menu_state *menu_st,
       settings_t *settings)
 {
@@ -9267,6 +9310,7 @@ bool menu_driver_iterate(
       enum menu_action action,
       retro_time_t current_time)
 {
+   menu_driver_pump_gamegate_sources(menu_st, settings);
    menu_driver_pump_pending(menu_st, settings);
    action = menu_driver_media_launch(menu_st, action);
 

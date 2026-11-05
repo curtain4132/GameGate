@@ -106,6 +106,7 @@ GENERIC_DEFERRED_PUSH(deferred_push_add_content_list,               DISPLAYLIST_
 GENERIC_DEFERRED_PUSH(deferred_push_history_list,                   DISPLAYLIST_HISTORY)
 GENERIC_DEFERRED_PUSH(deferred_push_database_manager_list,          DISPLAYLIST_DATABASES)
 GENERIC_DEFERRED_PUSH(deferred_push_content_collection_list,        DISPLAYLIST_DATABASE_PLAYLISTS)
+GENERIC_DEFERRED_PUSH(deferred_push_gamegate_sources,               DISPLAYLIST_GAMEGATE_SOURCES)
 GENERIC_DEFERRED_PUSH(deferred_push_gamegate_library,               DISPLAYLIST_GAMEGATE_LIBRARY)
 GENERIC_DEFERRED_PUSH(deferred_push_configurations_list,            DISPLAYLIST_CONFIGURATIONS_LIST)
 GENERIC_DEFERRED_PUSH(deferred_push_load_content_special,           DISPLAYLIST_LOAD_CONTENT_LIST)
@@ -820,6 +821,11 @@ static int menu_cbs_init_bind_deferred_push_compare_label(
       {MENU_ENUM_LABEL_DEFERRED_DROPDOWN_BOX_LIST_MANUAL_CONTENT_SCAN_CORE_NAME, deferred_push_dropdown_box_list_manual_content_scan_core_name},
       {MENU_ENUM_LABEL_DEFERRED_RECORDING_SETTINGS_LIST, deferred_push_recording_settings_list},
       {MENU_ENUM_LABEL_COLLECTION, deferred_push_content_collection_list},
+      {MENU_ENUM_LABEL_GAMEGATE_SOURCES, deferred_push_gamegate_sources},
+      {MENU_ENUM_LABEL_GG_SOURCE_DETAIL, deferred_push_gamegate_sources},
+      {MENU_ENUM_LABEL_GG_SOURCE_GAMES, deferred_push_gamegate_sources},
+      {MENU_ENUM_LABEL_GG_SOURCE_GAME, deferred_push_gamegate_sources},
+      {MENU_ENUM_LABEL_GG_SOURCE_CONFIRM, deferred_push_gamegate_sources},
       {MENU_ENUM_LABEL_GAMEGATE_LIBRARY, deferred_push_gamegate_library},
       {MENU_ENUM_LABEL_SETTINGS,   deferred_push_settings},
       {MENU_ENUM_LABEL_CONFIGURATIONS_LIST, deferred_push_configurations_list},
@@ -972,6 +978,11 @@ static int menu_cbs_init_bind_deferred_push_compare_label(
          { MENU_ENUM_LABEL_DEFERRED_REMAP_FILE_MANAGER_LIST, deferred_push_remap_file_manager },
          { MENU_ENUM_LABEL_CORE_LIST, deferred_push_core_list },
          { MENU_ENUM_LABEL_PLAYLISTS_TAB, deferred_push_content_collection_list },
+      {MENU_ENUM_LABEL_GAMEGATE_SOURCES, deferred_push_gamegate_sources},
+      {MENU_ENUM_LABEL_GG_SOURCE_DETAIL, deferred_push_gamegate_sources},
+      {MENU_ENUM_LABEL_GG_SOURCE_GAMES, deferred_push_gamegate_sources},
+      {MENU_ENUM_LABEL_GG_SOURCE_GAME, deferred_push_gamegate_sources},
+      {MENU_ENUM_LABEL_GG_SOURCE_CONFIRM, deferred_push_gamegate_sources},
          { MENU_ENUM_LABEL_GAMEGATE_LIBRARY, deferred_push_gamegate_library },
          { MENU_ENUM_LABEL_CONFIGURATIONS, deferred_push_configurations },
          { MENU_ENUM_LABEL_VIDEO_SHADER_PRESET, deferred_push_video_shader_preset },
