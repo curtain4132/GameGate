@@ -1,5 +1,15 @@
 AGENTS.md
 
+## GameGate local working notes
+
+- Keep temporary plans, progress logs and investigation notes in `.work-notes/`
+  at this checkout root; create the directory when needed and keep it untracked.
+- Use `.work-notes/task_plan.md`, `.work-notes/progress.md` and
+  `.work-notes/findings.md`; do not recreate these files at the repository root.
+- Keep durable designs and delivery documentation under `docs/`, and reusable
+  checks under `tools/`. Commit verified project changes when authorized, not
+  automatically after every update to working notes.
+
 ## Project
 
 RetroArch is primarily written in C89. Preserve the existing language and style of the file being edited.

@@ -401,3 +401,6 @@ samples/input/sensor_subdevice/core_sensor_fragment.c
 
 # GameGate local build outputs, downloads and runtime data
 /artifacts/
+
+# Local agent plans, progress and investigation notes
+/.work-notes/
